@@ -1,5 +1,5 @@
 from fastapi import FastAPI, Depends
-from app.routers import users
+from app.routers import users, rfid_tags, storage_slots
 from app.security import verify_api_key
 
 # Create FastAPI app
@@ -20,6 +20,8 @@ def read_root():
 
 # Protected routes (require Bearer token)
 app.include_router(users.router, dependencies=[Depends(verify_api_key)])
+app.include_router(rfid_tags.router, dependencies=[Depends(verify_api_key)])
+app.include_router(storage_slots.router, dependencies=[Depends(verify_api_key)])
 
 if __name__ == "__main__":
     import uvicorn
