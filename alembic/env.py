@@ -14,9 +14,13 @@ load_dotenv()
 
 # Import your database and models
 from app.database import Base
-from app.models.user import User  # This is crucial - must import all models
+from app.models.item import Item
+from app.models.large_item import LargeItem
+from app.models.partition import Partition
 from app.models.rfid_tag import RFIDTag
-from app.models.storage_slot import StorageSlot
+from app.models.storage_section import StorageSection
+from app.models.transaction import Transaction
+from app.models.user import User
 
 # this is the Alembic Config object
 config = context.config
