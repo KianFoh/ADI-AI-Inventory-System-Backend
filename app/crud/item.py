@@ -1,10 +1,9 @@
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_
 from app.models.item import Item, ItemType, MeasureMethod
-from app.schemas.item import ItemCreate, ItemUpdate, ItemResponse, ItemWithImageResponse, ItemStatsResponse
+from app.schemas.item import ItemCreate, ItemUpdate, ItemResponse, ItemStatsResponse
+from app.utils.image import save_image_from_base64, delete_image, get_image_url
 from typing import List, Optional, Tuple
-import base64
-import imghdr
 
 def get_item(db: Session, item_id: str) -> Optional[Item]:
     return db.query(Item).filter(Item.id == item_id).first()
@@ -17,7 +16,6 @@ def get_items(
     item_type: Optional[ItemType] = None,
     manufacturer: Optional[str] = None
 ) -> Tuple[List[Item], int]:
-    """Get items with pagination"""
     query = db.query(Item)
     
     if search:
@@ -49,28 +47,14 @@ def create_item(db: Session, item: ItemCreate) -> Item:
     if get_item(db, item.id):
         raise ValueError("Item with this ID already exists")
     
-    image = None
-    image_filename = None
-    image_content_type = None
-    
+    image_path = None
     if item.image:
         try:
-            if item.image.startswith('data:'):
-                image_part = item.image.split(',')[1]
-            else:
-                image_part = item.image
-            
-            image_bytes = base64.b64decode(image_part)
-            
-            img_type = imghdr.what(None, h=image_bytes)
-            if not img_type:
-                raise ValueError("Invalid image format")
-            
-            image = image_bytes
-            image_filename = f"{item.id}_image.{img_type}"
-            image_content_type = f"image/{img_type}"
-            
+            # This will automatically create the directory if it doesn't exist
+            image_path = save_image_from_base64(item.id, item.image)
+            print(f"Image saved for item {item.id}: {image_path}")
         except Exception as e:
+            print(f"Failed to save image for item {item.id}: {e}")
             raise ValueError(f"Invalid image data: {str(e)}")
     
     db_item = Item(
@@ -82,9 +66,7 @@ def create_item(db: Session, item: ItemCreate) -> Item:
         item_weight=item.item_weight,
         partition_weight=item.partition_weight,
         unit=item.unit,
-        image=image,
-        image_filename=image_filename,
-        image_content_type=image_content_type
+        image_path=image_path
     )
     
     db.add(db_item)
@@ -103,27 +85,19 @@ def update_item(db: Session, item_id: str, item: ItemUpdate) -> Optional[Item]:
     if 'image' in update_data:
         image_value = update_data.pop('image')
         
+        # Delete old image if it exists
+        if db_item.image_path:
+            delete_image(db_item.image_path)
+        
         if image_value is None:
-            db_item.image = None
-            db_item.image_filename = None
-            db_item.image_content_type = None
+            db_item.image_path = None
         else:
             try:
-                if image_value.startswith('data:'):
-                    image_part = image_value.split(',')[1]
-                else:
-                    image_part = image_value
-                
-                image_bytes = base64.b64decode(image_part)
-                img_type = imghdr.what(None, h=image_bytes)
-                if not img_type:
-                    raise ValueError("Invalid image format")
-                
-                db_item.image = image_bytes
-                db_item.image_filename = f"{item_id}_image.{img_type}"
-                db_item.image_content_type = f"image/{img_type}"
-                
+                # This will automatically create the directory if it doesn't exist
+                db_item.image_path = save_image_from_base64(item_id, image_value)
+                print(f"Image updated for item {item_id}: {db_item.image_path}")
             except Exception as e:
+                print(f"Failed to update image for item {item_id}: {e}")
                 raise ValueError(f"Invalid image data: {str(e)}")
     
     for key, value in update_data.items():
@@ -148,12 +122,20 @@ def delete_item(db: Session, item_id: str) -> Optional[Item]:
     if partition_count > 0 or large_item_count > 0:
         raise ValueError("Cannot delete item that has associated partitions or large items")
     
+    # Delete image file
+    if db_item.image_path:
+        delete_image(db_item.image_path)
+    
     db.delete(db_item)
     db.commit()
     return db_item
 
-def create_item_response(db: Session, item: Item) -> ItemResponse:
+def create_item_response(db: Session, item: Item, base_url: str = "") -> ItemResponse:
     """Create ItemResponse from Item model"""
+    image_url = None
+    if item.image_path:
+        image_url = get_image_url(item.id, base_url)
+    
     return ItemResponse(
         id=item.id,
         name=item.name,
@@ -163,30 +145,10 @@ def create_item_response(db: Session, item: Item) -> ItemResponse:
         item_weight=item.item_weight,
         partition_weight=item.partition_weight,
         unit=item.unit,
-        image_filename=item.image_filename,
-        image_content_type=item.image_content_type
+        image_url=image_url
     )
 
-def get_item_image(db: Session, item_id: str) -> Optional[ItemWithImageResponse]:
-    """Get item with image data"""
-    item = get_item(db, item_id)
-    if not item:
-        return None
-    
-    item_response = create_item_response(db, item)
-    
-    image = None
-    if item.image:
-        image = base64.b64encode(item.image).decode('utf-8')
-        if item.image_content_type:
-            image = f"data:{item.image_content_type};base64,{image}"
-    
-    return ItemWithImageResponse(
-        **item_response.model_dump(),
-        image=image
-    )
-
-def get_item_with_stats(db: Session, item_id: str) -> Optional[ItemStatsResponse]:
+def get_item_with_stats(db: Session, item_id: str, base_url: str = "") -> Optional[ItemStatsResponse]:
     """Get item with detailed statistics"""
     item = get_item(db, item_id)
     if not item:
@@ -199,7 +161,7 @@ def get_item_with_stats(db: Session, item_id: str) -> Optional[ItemStatsResponse
     large_item_count = db.query(func.count(LargeItem.id)).filter(LargeItem.item_id == item_id).scalar() or 0
     total_instances = partition_count + large_item_count
     
-    item_response = create_item_response(db, item)
+    item_response = create_item_response(db, item, base_url)
     
     return ItemStatsResponse(
         **item_response.model_dump(),

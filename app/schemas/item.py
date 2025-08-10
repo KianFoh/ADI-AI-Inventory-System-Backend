@@ -19,8 +19,7 @@ class ItemBase(BaseModel):
     item_weight: Optional[float] = None
     partition_weight: Optional[float] = None
     unit: int
-    image_filename: Optional[str] = None
-    image_content_type: Optional[str] = None
+    image_url: Optional[str] = None
 
 class ItemCreate(BaseModel):
     id: str
@@ -31,7 +30,7 @@ class ItemCreate(BaseModel):
     item_weight: Optional[float] = None
     partition_weight: Optional[float] = None
     unit: int
-    image: Optional[str] = None  # Base64 encoded image
+    image: Optional[str] = None
 
     @field_validator('id')
     @classmethod
@@ -109,9 +108,6 @@ class ItemUpdate(BaseModel):
 class ItemResponse(ItemBase):
     class Config:
         from_attributes = True
-
-class ItemWithImageResponse(ItemResponse):
-    image: Optional[str] = None  # Base64 encoded image
 
 class ItemStatsResponse(ItemResponse):
     partition_count: int = 0

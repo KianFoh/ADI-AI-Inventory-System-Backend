@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Integer, Enum, Float, LargeBinary
+from sqlalchemy import Column, String, Integer, Enum, Float
 from sqlalchemy.orm import relationship
 from app.database import Base
 import enum
@@ -21,10 +21,8 @@ class Item(Base):
     measure_method = Column(Enum(MeasureMethod), nullable=True)
     item_weight = Column(Float, nullable=True)
     partition_weight = Column(Float, nullable=True)
-    unit = Column(Integer, nullable=False)  # Storage units required per partition/large item
-    image = Column(LargeBinary, nullable=True)
-    image_filename = Column(String(255), nullable=True)
-    image_content_type = Column(String(100), nullable=True)
+    unit = Column(Integer, nullable=False)
+    image_path = Column(String(500), nullable=True)
     
     partitions = relationship("Partition", back_populates="item")
     large_items = relationship("LargeItem", back_populates="item")

@@ -33,7 +33,7 @@ class StorageSection(Base):
     def generate_id(floor: str, cabinet: str, layer: str, color: str) -> str:
         """Generate storage section ID from components"""
         color_code = color.upper()[0] if color else "X"
-        return f"{floor}{cabinet}{layer}{color_code}"
+        return f"{floor}-{cabinet}-{layer}-{color_code}"
 
     @property
     def available_units(self) -> int:
