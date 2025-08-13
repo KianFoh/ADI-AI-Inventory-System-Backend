@@ -1,5 +1,5 @@
 from fastapi import FastAPI, Depends
-from app.routers import users, transaction, storage_section, rfid_tags, partition, large_item, item 
+from app.routers import users, transaction, storage_section, rfid_tags, partition, large_item, item, container
 from app.security import verify_api_key
 
 # Create FastAPI app
@@ -24,6 +24,7 @@ app.include_router(transaction.router, dependencies=[Depends(verify_api_key)])
 app.include_router(storage_section.router, dependencies=[Depends(verify_api_key)])
 app.include_router(rfid_tags.router, dependencies=[Depends(verify_api_key)])
 app.include_router(partition.router, dependencies=[Depends(verify_api_key)])
+app.include_router(container.router, dependencies=[Depends(verify_api_key)])
 app.include_router(large_item.router, dependencies=[Depends(verify_api_key)])
 app.include_router(item.router, dependencies=[Depends(verify_api_key)])
 

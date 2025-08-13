@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Integer, Enum, DateTime, ForeignKey
+from sqlalchemy import Column, Float, String, Integer, Enum, DateTime, ForeignKey
 from app.database import Base
 from datetime import datetime, timezone
 import uuid
@@ -12,6 +12,7 @@ class TransactionType(enum.Enum):
 class ItemType(enum.Enum):
     PARTITION = "partition"
     LARGE_ITEM = "large_item"
+    CONTAINER = "container"
 
 class Transaction(Base):
     __tablename__ = "transactions"
@@ -23,13 +24,21 @@ class Transaction(Base):
     item_id = Column(String(255), nullable=False, index=True)
     item_name = Column(String(255), nullable=False, index=True)
     
-    partition_id = Column(String(255), nullable=True, index=True)      # If partition
-    large_item_id = Column(String(255), nullable=True, index=True)     # If large item
+    partition_id = Column(String(255), nullable=True, index=True)   # If partition
+    large_item_id = Column(String(255), nullable=True, index=True)  # If large item
+    container_id = Column(String(255), nullable=True, index=True)   # If container
     storage_section_id = Column(String(255), nullable=False, index=True)
     
+    # Partition
     previous_quantity = Column(Integer, nullable=True)
     current_quantity = Column(Integer, nullable=True)
     quantity_change = Column(Integer, nullable=True)  # +5, -3, etc.
+
+    # Container
+    previous_weight = Column(Float, nullable=True)
+    current_weight = Column(Float, nullable=True)
+    weight_change = Column(Float, nullable=True) 
+    
     user_name = Column(String(255), nullable=True, index=True)
     
     def __repr__(self):

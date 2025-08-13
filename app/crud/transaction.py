@@ -15,9 +15,13 @@ def create_transaction(db: Session, transaction: TransactionCreate) -> Transacti
         storage_section_id=transaction.storage_section_id,
         partition_id=transaction.partition_id,
         large_item_id=transaction.large_item_id,
+        container_id=transaction.container_id,
         previous_quantity=transaction.previous_quantity,
         current_quantity=transaction.current_quantity,
         quantity_change=transaction.quantity_change,
+        previous_weight=transaction.previous_weight,
+        current_weight=transaction.current_weight,
+        weight_change=transaction.weight_change, 
         user_name=transaction.user_name,
         transaction_date=datetime.now(timezone.utc)
     )
@@ -124,6 +128,20 @@ def get_transactions_by_partition(
         .limit(limit)\
         .all()
 
+def get_transactions_by_container(
+    db: Session, 
+    container_id: str, 
+    skip: int = 0, 
+    limit: int = 100
+) -> List[Transaction]:
+    """Get all transactions for a specific container"""
+    return db.query(Transaction)\
+        .filter(Transaction.container_id == container_id)\
+        .order_by(desc(Transaction.transaction_date))\
+        .offset(skip)\
+        .limit(limit)\
+        .all()
+
 def get_transactions_by_large_item(
     db: Session, 
     large_item_id: str, 
@@ -215,20 +233,32 @@ def get_transaction_stats(
     unique_users = query.filter(Transaction.user_name.isnot(None))\
         .with_entities(Transaction.user_name).distinct().count()
     
+    # Quantity changes for partitions
     total_quantity_changes = db.query(func.coalesce(func.sum(Transaction.quantity_change), 0))\
         .filter(Transaction.quantity_change.isnot(None))
+    
+    # Weight changes for containers
+    total_weight_changes = db.query(func.coalesce(func.sum(Transaction.weight_change), 0.0))\
+        .filter(Transaction.weight_change.isnot(None))
     
     if filters:
         if filters.start_date:
             total_quantity_changes = total_quantity_changes.filter(
                 Transaction.transaction_date >= filters.start_date
             )
+            total_weight_changes = total_weight_changes.filter(
+                Transaction.transaction_date >= filters.start_date
+            )
         if filters.end_date:
             total_quantity_changes = total_quantity_changes.filter(
                 Transaction.transaction_date <= filters.end_date
             )
+            total_weight_changes = total_weight_changes.filter(
+                Transaction.transaction_date <= filters.end_date
+            )
     
     total_quantity_changes = total_quantity_changes.scalar()
+    total_weight_changes = total_weight_changes.scalar()
     
     date_range = {}
     if total_transactions > 0:
@@ -248,6 +278,7 @@ def get_transaction_stats(
         "unique_items": unique_items,
         "unique_users": unique_users,
         "total_quantity_changes": total_quantity_changes,
+        "total_weight_changes": total_weight_changes,
         "date_range": date_range
     }
 
