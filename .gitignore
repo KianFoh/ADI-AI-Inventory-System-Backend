@@ -208,3 +208,6 @@ __marimo__/
 
 # Uploaded images and resources
 resource/
+
+# DB credential
+pg_backup_config.env

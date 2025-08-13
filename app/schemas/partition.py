@@ -12,7 +12,7 @@ class PartitionBase(BaseModel):
     item_id: str
     storage_section_id: str
     rfid_tag_id: str
-    quantity: int = 0
+    quantity: int
     capacity: int
     status: PartitionStatus = PartitionStatus.AVAILABLE
 
@@ -20,6 +20,7 @@ class PartitionCreate(BaseModel):
     item_id: str
     storage_section_id: str
     rfid_tag_id: str
+    quantity: int
     capacity: int
 
     @field_validator('item_id')
@@ -37,22 +38,43 @@ class PartitionCreate(BaseModel):
     def validate_rfid_tag_id(cls, v: str) -> str:
         return non_empty_string_validator('RFID Tag ID')(v)
 
+    @field_validator('quantity')
+    @classmethod
+    def validate_quantity(cls, v: int) -> int:
+        return bounded_int_validator(0, 10000, 'Quantity')(v)
+
     @field_validator('capacity')
     @classmethod
     def validate_capacity(cls, v: int) -> int:
         return bounded_int_validator(1, 10000, 'Capacity')(v)
 
 class PartitionUpdate(BaseModel):
+    item_id: Optional[str] = None  # ✅ ADD - Allow item changes
     storage_section_id: Optional[str] = None
+    rfid_tag_id: Optional[str] = None  # ✅ ADD - Allow RFID changes
     quantity: Optional[int] = None
     capacity: Optional[int] = None
     status: Optional[PartitionStatus] = None
+
+    @field_validator('item_id')  # ✅ ADD VALIDATOR
+    @classmethod
+    def validate_item_id(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            return non_empty_string_validator('Item ID')(v)
+        return v
 
     @field_validator('storage_section_id')
     @classmethod
     def validate_storage_section_id(cls, v: Optional[str]) -> Optional[str]:
         if v is not None:
             return non_empty_string_validator('Storage Section ID')(v)
+        return v
+
+    @field_validator('rfid_tag_id')  # ✅ ADD VALIDATOR
+    @classmethod
+    def validate_rfid_tag_id(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            return non_empty_string_validator('RFID Tag ID')(v)
         return v
 
     @field_validator('quantity')

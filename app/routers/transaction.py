@@ -37,7 +37,7 @@ def get_transactions(
     )
     
     total_count = transaction_crud.get_transaction_count(db)
-    transaction_responses = [TransactionResponse.model_validate(txn) for txn in transactions]
+    transaction_responses = [TransactionResponse.model_validate(txn, from_attributes=True) for txn in transactions]
     
     return PaginatedTransactionsResponse.create(
         transactions=transaction_responses,
@@ -66,7 +66,7 @@ def get_filtered_transactions(
         sort_order=sort_order
     )
     
-    transaction_responses = [TransactionResponse.model_validate(txn) for txn in transactions]
+    transaction_responses = [TransactionResponse.model_validate(txn, from_attributes=True) for txn in transactions]
     
     return PaginatedTransactionsResponse.create(
         transactions=transaction_responses,
@@ -83,7 +83,7 @@ def get_recent_transactions(
 ):
     """Get recent transactions"""
     transactions = transaction_crud.get_recent_transactions(db, days=days, limit=limit)
-    return [TransactionResponse.model_validate(txn) for txn in transactions]
+    return [TransactionResponse.model_validate(txn, from_attributes=True) for txn in transactions]
 
 @router.get("/stats", response_model=TransactionStats)
 def get_transaction_statistics(
@@ -119,7 +119,7 @@ def get_transactions_by_item(
         skip=skip, 
         limit=page_size
     )
-    return [TransactionResponse.model_validate(txn) for txn in transactions]
+    return [TransactionResponse.model_validate(txn, from_attributes=True) for txn in transactions]
 
 @router.get("/partition/{partition_id}", response_model=List[TransactionResponse])
 def get_transactions_by_partition(
@@ -136,7 +136,24 @@ def get_transactions_by_partition(
         skip=skip, 
         limit=page_size
     )
-    return [TransactionResponse.model_validate(txn) for txn in transactions]
+    return [TransactionResponse.model_validate(txn, from_attributes=True) for txn in transactions]
+
+@router.get("/container/{container_id}", response_model=List[TransactionResponse])
+def get_transactions_by_container(
+    container_id: str,
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(20, ge=1, le=100, description="Items per page"),
+    db: Session = Depends(get_db)
+):
+    """Get all transactions for a specific container"""
+    skip = (page - 1) * page_size
+    transactions = transaction_crud.get_transactions_by_container(
+        db, 
+        container_id=container_id, 
+        skip=skip, 
+        limit=page_size
+    )
+    return [TransactionResponse.model_validate(txn, from_attributes=True) for txn in transactions]
 
 @router.get("/large-item/{large_item_id}", response_model=List[TransactionResponse])
 def get_transactions_by_large_item(
@@ -153,7 +170,7 @@ def get_transactions_by_large_item(
         skip=skip, 
         limit=page_size
     )
-    return [TransactionResponse.model_validate(txn) for txn in transactions]
+    return [TransactionResponse.model_validate(txn, from_attributes=True) for txn in transactions]
 
 @router.get("/storage/{storage_section_id}", response_model=List[TransactionResponse])
 def get_transactions_by_storage_section(
@@ -170,7 +187,7 @@ def get_transactions_by_storage_section(
         skip=skip, 
         limit=page_size
     )
-    return [TransactionResponse.model_validate(txn) for txn in transactions]
+    return [TransactionResponse.model_validate(txn, from_attributes=True) for txn in transactions]
 
 @router.get("/user/{user_name}", response_model=List[TransactionResponse])
 def get_transactions_by_user(
@@ -187,7 +204,7 @@ def get_transactions_by_user(
         skip=skip, 
         limit=page_size
     )
-    return [TransactionResponse.model_validate(txn) for txn in transactions]
+    return [TransactionResponse.model_validate(txn, from_attributes=True) for txn in transactions]
 
 @router.get("/{transaction_id}", response_model=TransactionResponse)
 def get_transaction(transaction_id: str, db: Session = Depends(get_db)):
@@ -198,13 +215,13 @@ def get_transaction(transaction_id: str, db: Session = Depends(get_db)):
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Transaction not found"
         )
-    return TransactionResponse.model_validate(transaction)
+    return TransactionResponse.model_validate(transaction, from_attributes=True)
 
 @router.post("/", response_model=TransactionResponse, status_code=status.HTTP_201_CREATED)
 def create_transaction(transaction: TransactionCreate, db: Session = Depends(get_db)):
     """Create new transaction"""
     created_transaction = transaction_crud.create_transaction(db=db, transaction=transaction)
-    return TransactionResponse.model_validate(created_transaction)
+    return TransactionResponse.model_validate(created_transaction, from_attributes=True)
 
 @router.delete("/{transaction_id}", response_model=dict)
 def delete_transaction(transaction_id: str, db: Session = Depends(get_db)):

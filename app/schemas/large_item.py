@@ -31,14 +31,30 @@ class LargeItemCreate(BaseModel):
         return non_empty_string_validator('RFID Tag ID')(v)
 
 class LargeItemUpdate(BaseModel):
+    item_id: Optional[str] = None
     storage_section_id: Optional[str] = None
+    rfid_tag_id: Optional[str] = None
     status: Optional[LargeItemStatus] = None
+
+    @field_validator('item_id')
+    @classmethod
+    def validate_item_id(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            return non_empty_string_validator('Item ID')(v)
+        return v
 
     @field_validator('storage_section_id')
     @classmethod
     def validate_storage_section_id(cls, v: Optional[str]) -> Optional[str]:
         if v is not None:
             return non_empty_string_validator('Storage Section ID')(v)
+        return v
+
+    @field_validator('rfid_tag_id')
+    @classmethod
+    def validate_rfid_tag_id(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            return non_empty_string_validator('RFID Tag ID')(v)
         return v
 
 class LargeItemResponse(LargeItemBase):

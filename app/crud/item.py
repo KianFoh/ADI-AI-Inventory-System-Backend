@@ -43,14 +43,13 @@ def get_items(
     return items, total_count
 
 def create_item(db: Session, item: ItemCreate) -> Item:
-    """Create new item with optional image"""
+    """Create new item with optional image and auto-assigned measure_method"""
     if get_item(db, item.id):
         raise ValueError("Item with this ID already exists")
     
     image_path = None
     if item.image:
         try:
-            # This will automatically create the directory if it doesn't exist
             image_path = save_image_from_base64(item.id, item.image)
             print(f"Image saved for item {item.id}: {image_path}")
         except Exception as e:
@@ -62,9 +61,7 @@ def create_item(db: Session, item: ItemCreate) -> Item:
         name=item.name,
         manufacturer=item.manufacturer,
         item_type=item.item_type,
-        measure_method=item.measure_method,
-        item_weight=item.item_weight,
-        partition_weight=item.partition_weight,
+        measure_method=item.measure_method,  # Auto-assigned by schema validation
         unit=item.unit,
         image_path=image_path
     )
@@ -82,10 +79,17 @@ def update_item(db: Session, item_id: str, item: ItemUpdate) -> Optional[Item]:
     
     update_data = item.model_dump(exclude_unset=True)
     
+    if 'id' in update_data and update_data['id'] != item_id:
+        new_id = update_data.pop('id')
+        
+        if get_item(db, new_id):
+            raise ValueError(f"Item with ID '{new_id}' already exists")
+        
+        db_item.id = new_id
+    
     if 'image' in update_data:
         image_value = update_data.pop('image')
         
-        # Delete old image if it exists
         if db_item.image_path:
             delete_image(db_item.image_path)
         
@@ -93,15 +97,25 @@ def update_item(db: Session, item_id: str, item: ItemUpdate) -> Optional[Item]:
             db_item.image_path = None
         else:
             try:
-                # This will automatically create the directory if it doesn't exist
-                db_item.image_path = save_image_from_base64(item_id, image_value)
-                print(f"Image updated for item {item_id}: {db_item.image_path}")
+                current_id = db_item.id
+                db_item.image_path = save_image_from_base64(current_id, image_value)
+                print(f"Image updated for item {current_id}: {db_item.image_path}")
             except Exception as e:
-                print(f"Failed to update image for item {item_id}: {e}")
+                print(f"Failed to update image for item {current_id}: {e}")
                 raise ValueError(f"Invalid image data: {str(e)}")
+    
+    if 'measure_method' in update_data:
+        update_data.pop('measure_method')
     
     for key, value in update_data.items():
         setattr(db_item, key, value)
+    
+    if db_item.item_type == ItemType.PARTITION:
+        db_item.measure_method = MeasureMethod.VISION
+    elif db_item.item_type == ItemType.LARGE_ITEM:
+        db_item.measure_method = None
+    elif db_item.item_type == ItemType.CONTAINER:
+        db_item.measure_method = MeasureMethod.WEIGHT
     
     db.commit()
     db.refresh(db_item)
@@ -115,12 +129,14 @@ def delete_item(db: Session, item_id: str) -> Optional[Item]:
     
     from app.models.partition import Partition
     from app.models.large_item import LargeItem
+    from app.models.container import Container
     
     partition_count = db.query(func.count(Partition.id)).filter(Partition.item_id == item_id).scalar()
     large_item_count = db.query(func.count(LargeItem.id)).filter(LargeItem.item_id == item_id).scalar()
+    container_count = db.query(func.count(Container.id)).filter(Container.item_id == item_id).scalar()
     
-    if partition_count > 0 or large_item_count > 0:
-        raise ValueError("Cannot delete item that has associated partitions or large items")
+    if partition_count > 0 or large_item_count > 0 or container_count > 0:
+        raise ValueError("Cannot delete item that has associated partitions, large items, or containers")
     
     # Delete image file
     if db_item.image_path:
@@ -142,8 +158,6 @@ def create_item_response(db: Session, item: Item, base_url: str = "") -> ItemRes
         manufacturer=item.manufacturer,
         item_type=item.item_type,
         measure_method=item.measure_method,
-        item_weight=item.item_weight,
-        partition_weight=item.partition_weight,
         unit=item.unit,
         image_url=image_url
     )
@@ -156,10 +170,12 @@ def get_item_with_stats(db: Session, item_id: str, base_url: str = "") -> Option
     
     from app.models.partition import Partition
     from app.models.large_item import LargeItem
+    from app.models.container import Container
     
     partition_count = db.query(func.count(Partition.id)).filter(Partition.item_id == item_id).scalar() or 0
     large_item_count = db.query(func.count(LargeItem.id)).filter(LargeItem.item_id == item_id).scalar() or 0
-    total_instances = partition_count + large_item_count
+    container_count = db.query(func.count(Container.id)).filter(Container.item_id == item_id).scalar() or 0
+    total_instances = partition_count + large_item_count + container_count
     
     item_response = create_item_response(db, item, base_url)
     
@@ -167,6 +183,7 @@ def get_item_with_stats(db: Session, item_id: str, base_url: str = "") -> Option
         **item_response.model_dump(),
         partition_count=partition_count,
         large_item_count=large_item_count,
+        container_count=container_count,
         total_instances=total_instances
     )
 

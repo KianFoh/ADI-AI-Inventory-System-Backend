@@ -19,14 +19,20 @@ class TransactionCreate(BaseModel):
     item_name: str
     storage_section_id: str
     
-    # fields based on item_type
+    # ID fields based on item_type
     partition_id: Optional[str] = None
     large_item_id: Optional[str] = None
+    container_id: Optional[str] = None
     
-    # Quantity fields (only for partitions)
+    # Quantity fields (for partition RETURNS only)
     previous_quantity: Optional[int] = None
     current_quantity: Optional[int] = None
     quantity_change: Optional[int] = None
+    
+    # Weight fields (for container RETURNS only)
+    previous_weight: Optional[float] = None
+    current_weight: Optional[float] = None
+    weight_change: Optional[float] = None
     
     user_name: Optional[str] = None
 
@@ -35,69 +41,133 @@ class TransactionCreate(BaseModel):
         print(f"DEBUG: Validating transaction - item_type={self.item_type}, transaction_type={self.transaction_type}")
         
         if self.item_type == ItemType.PARTITION:
-            if self.transaction_type == TransactionType.WITHDRAW:
-                self._validate_partition_withdrawal()
-            elif self.transaction_type == TransactionType.RETURN:
-                self._validate_partition_return()
+            self._validate_partition_transaction()
             
-            # Partition transactions never have large_item_id
-            if self.large_item_id is not None:
-                raise ValueError('large_item_id should be None for partition transactions')
-                
         elif self.item_type == ItemType.LARGE_ITEM:
             self._validate_large_item_transaction()
+            
+        elif self.item_type == ItemType.CONTAINER:
+            self._validate_container_transaction()
         
         return self
 
-    def _validate_partition_withdrawal(self):
-        """Validate partition withdrawal - NO quantity values"""
+    def _validate_partition_transaction(self):
+        """Validate partition transaction"""
         # Required fields
         if self.partition_id is None:
             raise ValueError('partition_id is required for partition transactions')
         
-        # Forbidden fields (no quantity tracking for withdrawals)
-        forbidden_fields = {
-            'previous_quantity': self.previous_quantity,
-            'current_quantity': self.current_quantity,
-            'quantity_change': self.quantity_change
+        # Large item and container fields must be None
+        if self.large_item_id is not None:
+            raise ValueError('large_item_id should be None for partition transactions')
+        if self.container_id is not None:
+            raise ValueError('container_id should be None for partition transactions')
+        
+        # Weight fields must be None
+        weight_fields = {
+            'previous_weight': self.previous_weight,
+            'current_weight': self.current_weight,
+            'weight_change': self.weight_change
         }
         
-        for field_name, value in forbidden_fields.items():
+        for field_name, value in weight_fields.items():
             if value is not None:
-                raise ValueError(f'{field_name} should be None for partition withdrawal transactions')
-
-    def _validate_partition_return(self):
-        """Validate partition return - MUST have quantity values"""
-        # Required fields
-        required_fields = {
-            'partition_id': self.partition_id,
-            'previous_quantity': self.previous_quantity,
-            'current_quantity': self.current_quantity,
-            'quantity_change': self.quantity_change
-        }
+                raise ValueError(f'{field_name} should be None for partition transactions')
         
-        for field_name, value in required_fields.items():
-            if value is None:
-                raise ValueError(f'{field_name} is required for partition return transactions')
+        if self.transaction_type == TransactionType.WITHDRAW:
+            # WITHDRAW: No quantity tracking
+            quantity_fields = {
+                'previous_quantity': self.previous_quantity,
+                'current_quantity': self.current_quantity,
+                'quantity_change': self.quantity_change
+            }
+            
+            for field_name, value in quantity_fields.items():
+                if value is not None:
+                    raise ValueError(f'{field_name} should be None for partition withdrawal transactions')
+        
+        elif self.transaction_type == TransactionType.RETURN:
+            # RETURN: Must have quantity tracking
+            required_fields = {
+                'previous_quantity': self.previous_quantity,
+                'current_quantity': self.current_quantity,
+                'quantity_change': self.quantity_change
+            }
+            
+            for field_name, value in required_fields.items():
+                if value is None:
+                    raise ValueError(f'{field_name} is required for partition return transactions')
 
     def _validate_large_item_transaction(self):
-        """Validate large item transaction - NO quantity values"""
+        """Validate large item transaction - NO quantity or weight tracking ever"""
         # Required fields
         if self.large_item_id is None:
             raise ValueError('large_item_id is required for large item transactions')
         
-        # Forbidden fields (no quantity tracking for large items)
+        # Forbidden fields
         forbidden_fields = {
             'partition_id': self.partition_id,
+            'container_id': self.container_id,
             'previous_quantity': self.previous_quantity,
             'current_quantity': self.current_quantity,
-            'quantity_change': self.quantity_change
+            'quantity_change': self.quantity_change,
+            'previous_weight': self.previous_weight,
+            'current_weight': self.current_weight,
+            'weight_change': self.weight_change
         }
         
         for field_name, value in forbidden_fields.items():
             if value is not None:
                 raise ValueError(f'{field_name} should be None for large item transactions')
 
+    def _validate_container_transaction(self):
+        """Validate container transaction"""
+        # Required fields
+        if self.container_id is None:
+            raise ValueError('container_id is required for container transactions')
+        
+        # Partition and large item fields must be None
+        if self.partition_id is not None:
+            raise ValueError('partition_id should be None for container transactions')
+        if self.large_item_id is not None:
+            raise ValueError('large_item_id should be None for container transactions')
+        
+        # Quantity fields must be None
+        quantity_fields = {
+            'previous_quantity': self.previous_quantity,
+            'current_quantity': self.current_quantity,
+            'quantity_change': self.quantity_change
+        }
+        
+        for field_name, value in quantity_fields.items():
+            if value is not None:
+                raise ValueError(f'{field_name} should be None for container transactions')
+        
+        if self.transaction_type == TransactionType.WITHDRAW:
+            # WITHDRAW: No weight tracking
+            weight_fields = {
+                'previous_weight': self.previous_weight,
+                'current_weight': self.current_weight,
+                'weight_change': self.weight_change
+            }
+            
+            for field_name, value in weight_fields.items():
+                if value is not None:
+                    raise ValueError(f'{field_name} should be None for container withdrawal transactions')
+        
+        elif self.transaction_type == TransactionType.RETURN:
+            # RETURN: Must have weight tracking
+            required_fields = {
+                'previous_weight': self.previous_weight,
+                'current_weight': self.current_weight,
+                'weight_change': self.weight_change
+            }
+            
+            for field_name, value in required_fields.items():
+                if value is None:
+                    raise ValueError(f'{field_name} is required for container return transactions')
+
+# Clean response without computed fields
 class TransactionResponse(TransactionBase):
     id: str
     transaction_date: datetime
@@ -105,19 +175,13 @@ class TransactionResponse(TransactionBase):
     # Include all fields
     partition_id: Optional[str] = None
     large_item_id: Optional[str] = None
+    container_id: Optional[str] = None
     previous_quantity: Optional[int] = None
     current_quantity: Optional[int] = None
     quantity_change: Optional[int] = None
-
-    @computed_field
-    @property
-    def is_partition_transaction(self) -> bool:
-        return self.item_type == ItemType.PARTITION
-
-    @computed_field
-    @property
-    def is_large_item_transaction(self) -> bool:
-        return self.item_type == ItemType.LARGE_ITEM
+    previous_weight: Optional[float] = None
+    current_weight: Optional[float] = None
+    weight_change: Optional[float] = None
 
     class Config:
         from_attributes = True
@@ -162,4 +226,5 @@ class TransactionStats(BaseModel):
     unique_items: int
     unique_users: int
     total_quantity_changes: int
+    total_weight_changes: float
     date_range: dict

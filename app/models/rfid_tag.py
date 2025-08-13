@@ -10,6 +10,7 @@ class RFIDTag(Base):
 
     partition = relationship("Partition", back_populates="rfid_tag", uselist=False)
     large_item = relationship("LargeItem", back_populates="rfid_tag", uselist=False)
+    container = relationship("Container", back_populates="rfid_tag", uselist=False)
     
     def __repr__(self):
         return f"<RFIDTag(id='{self.id}', assigned={self.assigned})>"

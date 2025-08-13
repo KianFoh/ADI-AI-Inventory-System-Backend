@@ -17,6 +17,7 @@ from app.database import Base
 from app.models.item import Item
 from app.models.large_item import LargeItem
 from app.models.partition import Partition
+from app.models.container import Container 
 from app.models.rfid_tag import RFIDTag
 from app.models.storage_section import StorageSection
 from app.models.transaction import Transaction

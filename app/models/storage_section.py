@@ -27,6 +27,7 @@ class StorageSection(Base):
 
     partitions = relationship("Partition", back_populates="storage_section", cascade="all, delete-orphan")
     large_items = relationship("LargeItem", back_populates="storage_section", cascade="all, delete-orphan")
+    containers = relationship("Container", back_populates="storage_section")
 
 
     @staticmethod
