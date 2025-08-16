@@ -1,10 +1,10 @@
-from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import func, or_, desc
+from sqlalchemy.orm import Session
+from sqlalchemy import or_
 from app.models.partition import Partition, PartitionStatus
 from app.models.item import Item, ItemType
 from app.models.storage_section import StorageSection
 from app.models.rfid_tag import RFIDTag
-from app.schemas.partition import PartitionCreate, PartitionUpdate, PartitionResponse
+from app.schemas.partition import PartitionCreate, PartitionUpdate
 from app.crud.general import (
     create_entity_with_rfid_and_storage, 
     delete_entity_with_rfid_and_storage,
@@ -55,7 +55,6 @@ def create_partition(db: Session, partition: PartitionCreate) -> Partition:
         'storage_section_id': partition.storage_section_id,
         'rfid_tag_id': partition.rfid_tag_id,
         'quantity': partition.quantity,
-        'capacity': partition.capacity,
         'status': PartitionStatus.AVAILABLE
     }
     

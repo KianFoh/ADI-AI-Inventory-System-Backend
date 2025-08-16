@@ -1,8 +1,8 @@
 """Initialize Database
 
-Revision ID: 50f133519eaa
+Revision ID: 3b6c3e162b99
 Revises: 
-Create Date: 2025-08-13 00:14:52.703244
+Create Date: 2025-08-15 23:40:12.881892
 
 """
 from typing import Sequence, Union
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = '50f133519eaa'
+revision: str = '3b6c3e162b99'
 down_revision: Union[str, Sequence[str], None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -29,6 +29,9 @@ def upgrade() -> None:
     sa.Column('measure_method', sa.Enum('VISION', 'WEIGHT', name='measuremethod'), nullable=True),
     sa.Column('unit', sa.Integer(), nullable=False),
     sa.Column('image_path', sa.String(length=500), nullable=True),
+    sa.Column('container_item_weight', sa.Float(), nullable=True),
+    sa.Column('container_weight', sa.Float(), nullable=True),
+    sa.Column('partition_capacity', sa.Integer(), nullable=True),
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index(op.f('ix_items_id'), 'items', ['id'], unique=False)
@@ -51,15 +54,15 @@ def upgrade() -> None:
     sa.PrimaryKeyConstraint('id')
     )
     op.create_table('transactions',
-    sa.Column('id', sa.String(length=255), nullable=False),
+    sa.Column('id', sa.String(length=20), nullable=False),
     sa.Column('transaction_type', sa.Enum('WITHDRAW', 'RETURN', 'CONSUMED', name='transactiontype'), nullable=False),
     sa.Column('transaction_date', sa.DateTime(), nullable=False),
     sa.Column('item_type', sa.Enum('PARTITION', 'LARGE_ITEM', 'CONTAINER', name='itemtype'), nullable=False),
     sa.Column('item_id', sa.String(length=255), nullable=False),
     sa.Column('item_name', sa.String(length=255), nullable=False),
-    sa.Column('partition_id', sa.String(length=255), nullable=True),
-    sa.Column('large_item_id', sa.String(length=255), nullable=True),
-    sa.Column('container_id', sa.String(length=255), nullable=True),
+    sa.Column('partition_id', sa.String(length=20), nullable=True),
+    sa.Column('large_item_id', sa.String(length=20), nullable=True),
+    sa.Column('container_id', sa.String(length=20), nullable=True),
     sa.Column('storage_section_id', sa.String(length=255), nullable=False),
     sa.Column('previous_quantity', sa.Integer(), nullable=True),
     sa.Column('current_quantity', sa.Integer(), nullable=True),
@@ -91,12 +94,12 @@ def upgrade() -> None:
     op.create_index(op.f('ix_users_email'), 'users', ['email'], unique=True)
     op.create_index(op.f('ix_users_employeeId'), 'users', ['employeeId'], unique=False)
     op.create_table('containers',
-    sa.Column('id', sa.String(length=255), nullable=False),
+    sa.Column('id', sa.String(length=20), nullable=False),
     sa.Column('item_id', sa.String(length=255), nullable=False),
     sa.Column('storage_section_id', sa.String(length=255), nullable=False),
     sa.Column('rfid_tag_id', sa.String(length=255), nullable=False),
-    sa.Column('weight', sa.Float(), nullable=False),
-    sa.Column('container_weight', sa.Float(), nullable=False),
+    sa.Column('items_weight', sa.Float(), nullable=False),
+    sa.Column('quantity', sa.Integer(), nullable=True),
     sa.Column('status', sa.Enum('AVAILABLE', 'WITHDRAWN', name='containerstatus'), nullable=False),
     sa.ForeignKeyConstraint(['item_id'], ['items.id'], ),
     sa.ForeignKeyConstraint(['rfid_tag_id'], ['rfid_tags.id'], ),
@@ -109,7 +112,7 @@ def upgrade() -> None:
     op.create_index(op.f('ix_containers_status'), 'containers', ['status'], unique=False)
     op.create_index(op.f('ix_containers_storage_section_id'), 'containers', ['storage_section_id'], unique=False)
     op.create_table('large_items',
-    sa.Column('id', sa.String(length=255), nullable=False),
+    sa.Column('id', sa.String(length=20), nullable=False),
     sa.Column('item_id', sa.String(length=255), nullable=False),
     sa.Column('storage_section_id', sa.String(length=255), nullable=False),
     sa.Column('rfid_tag_id', sa.String(length=255), nullable=False),
@@ -125,12 +128,11 @@ def upgrade() -> None:
     op.create_index(op.f('ix_large_items_status'), 'large_items', ['status'], unique=False)
     op.create_index(op.f('ix_large_items_storage_section_id'), 'large_items', ['storage_section_id'], unique=False)
     op.create_table('partitions',
-    sa.Column('id', sa.String(length=255), nullable=False),
+    sa.Column('id', sa.String(length=20), nullable=False),
     sa.Column('item_id', sa.String(length=255), nullable=False),
     sa.Column('storage_section_id', sa.String(length=255), nullable=False),
     sa.Column('rfid_tag_id', sa.String(length=255), nullable=False),
     sa.Column('quantity', sa.Integer(), nullable=False),
-    sa.Column('capacity', sa.Integer(), nullable=False),
     sa.Column('status', sa.Enum('AVAILABLE', 'WITHDRAWN', name='partitionstatus'), nullable=False),
     sa.ForeignKeyConstraint(['item_id'], ['items.id'], ),
     sa.ForeignKeyConstraint(['rfid_tag_id'], ['rfid_tags.id'], ),

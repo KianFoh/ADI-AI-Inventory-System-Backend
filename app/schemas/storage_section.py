@@ -14,15 +14,12 @@ class StorageSectionBase(BaseModel):
     cabinet: str
     layer: str
     color: SectionColor
-    total_units: int
-    used_units: int = 0  
 
 class StorageSectionCreate(BaseModel):
     floor: str
     cabinet: str
     layer: str
     color: SectionColor
-    total_units: int
 
     @field_validator('floor')
     @classmethod
@@ -39,17 +36,12 @@ class StorageSectionCreate(BaseModel):
     def validate_layer(cls, v: str) -> str:
         return storage_format_validator('L', 'Layer')(v)
 
-    @field_validator('total_units')
-    @classmethod
-    def validate_total_units(cls, v: int) -> int:
-        return bounded_int_validator(1, 1000, 'Total units')(v)
 
 class StorageSectionUpdate(BaseModel):
     floor: Optional[str] = None
     cabinet: Optional[str] = None
     layer: Optional[str] = None
     color: Optional[SectionColor] = None
-    total_units: Optional[int] = None
 
     @field_validator('floor')
     @classmethod
@@ -66,39 +58,8 @@ class StorageSectionUpdate(BaseModel):
     def validate_layer(cls, v: Optional[str]) -> Optional[str]:
         return storage_format_optional_validator('L', 'Layer')(v)
 
-    @field_validator('total_units')
-    @classmethod
-    def validate_total_units(cls, v: Optional[int]) -> Optional[int]:
-        return bounded_int_optional_validator(1, 1000, 'Total units')(v)
-
 class StorageSectionResponse(StorageSectionBase):
     id: str
-
-    @computed_field
-    @property
-    def available_units(self) -> int:
-        return max(0, self.total_units - self.used_units)
-
-    @computed_field
-    @property
-    def utilization_rate(self) -> float:
-        """Calculate utilization rate (0.0 to 1.0)"""
-        if self.total_units == 0:
-            return 0.0
-        return round(self.used_units / self.total_units, 3)
-
-    @computed_field
-    @property
-    def is_full(self) -> bool:
-        """Check if section is at capacity"""
-        return self.used_units >= self.total_units
-
-    @computed_field
-    @property
-    def is_empty(self) -> bool:
-        """Check if section is empty"""
-        return self.used_units == 0
-
     class Config:
         from_attributes = True
 

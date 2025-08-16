@@ -39,7 +39,7 @@ def get_partitions(
         db, page=page, page_size=page_size, search=search, status=status_enum
     )
     
-    partition_responses = [PartitionResponse.model_validate(partition) for partition in partitions]
+    partition_responses = [PartitionResponse.model_validate(p) for p in partitions]
     
     return PaginatedPartitionsResponse.create(
         partitions=partition_responses,
@@ -51,19 +51,19 @@ def get_partitions(
 @router.get("/statuses", response_model=List[str])
 def get_partition_statuses():
     """Get available partition statuses"""
-    return [status.value for status in PartitionStatus]
+    return [s.value for s in PartitionStatus]
 
 @router.get("/item/{item_id}", response_model=List[PartitionResponse])
 def get_partitions_by_item(item_id: str, db: Session = Depends(get_db)):
     """Get all partitions for a specific item"""
     partitions = partition_crud.get_partitions_by_item(db, item_id)
-    return [PartitionResponse.model_validate(partition) for partition in partitions]
+    return [PartitionResponse.model_validate(p) for p in partitions]
 
 @router.get("/storage-section/{storage_section_id}", response_model=List[PartitionResponse])
 def get_partitions_by_storage_section(storage_section_id: str, db: Session = Depends(get_db)):
     """Get all partitions in a storage section"""
     partitions = partition_crud.get_partitions_by_storage_section(db, storage_section_id)
-    return [PartitionResponse.model_validate(partition) for partition in partitions]
+    return [PartitionResponse.model_validate(p) for p in partitions]
 
 @router.get("/count", response_model=int)
 def get_partition_count(db: Session = Depends(get_db)):
@@ -73,7 +73,7 @@ def get_partition_count(db: Session = Depends(get_db)):
 @router.get("/{partition_id}", response_model=PartitionResponse)
 def get_partition(partition_id: str, db: Session = Depends(get_db)):
     """Get partition by ID"""
-    partition = partition_crud.get_partition(db, partition_id=partition_id)
+    partition = partition_crud.get_partition(db, partition_id)
     if not partition:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -85,19 +85,16 @@ def get_partition(partition_id: str, db: Session = Depends(get_db)):
 def create_partition(partition: PartitionCreate, db: Session = Depends(get_db)):
     """Create new partition"""
     try:
-        created_partition = partition_crud.create_partition(db=db, partition=partition)
+        created_partition = partition_crud.create_partition(db, partition)
         return PartitionResponse.model_validate(created_partition)
     except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 @router.put("/{partition_id}", response_model=PartitionResponse)
 def update_partition(partition_id: str, partition: PartitionUpdate, db: Session = Depends(get_db)):
-    """Update partition (can change RFID, status, quantity, etc.)"""
+    """Update partition (RFID, status, quantity, etc.)"""
     try:
-        updated_partition = partition_crud.update_partition(db, partition_id=partition_id, partition=partition)
+        updated_partition = partition_crud.update_partition(db, partition_id, partition)
         if not updated_partition:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -105,15 +102,12 @@ def update_partition(partition_id: str, partition: PartitionUpdate, db: Session 
             )
         return PartitionResponse.model_validate(updated_partition)
     except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 @router.delete("/{partition_id}", response_model=PartitionResponse)
 def delete_partition(partition_id: str, db: Session = Depends(get_db)):
     """Delete partition (RFID automatically unassigned)"""
-    deleted_partition = partition_crud.delete_partition(db, partition_id=partition_id)
+    deleted_partition = partition_crud.delete_partition(db, partition_id)
     if not deleted_partition:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

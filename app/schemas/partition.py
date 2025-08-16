@@ -13,7 +13,6 @@ class PartitionBase(BaseModel):
     storage_section_id: str
     rfid_tag_id: str
     quantity: int
-    capacity: int
     status: PartitionStatus = PartitionStatus.AVAILABLE
 
 class PartitionCreate(BaseModel):
@@ -21,7 +20,6 @@ class PartitionCreate(BaseModel):
     storage_section_id: str
     rfid_tag_id: str
     quantity: int
-    capacity: int
 
     @field_validator('item_id')
     @classmethod
@@ -40,23 +38,31 @@ class PartitionCreate(BaseModel):
 
     @field_validator('quantity')
     @classmethod
-    def validate_quantity(cls, v: int) -> int:
-        return bounded_int_validator(0, 10000, 'Quantity')(v)
-
-    @field_validator('capacity')
-    @classmethod
-    def validate_capacity(cls, v: int) -> int:
-        return bounded_int_validator(1, 10000, 'Capacity')(v)
+    def validate_quantity(cls, v: int, info) -> int:
+        v = bounded_int_validator(0, 10000, 'Quantity')(v)
+        item_id = info.data.get('item_id')
+        if item_id:
+            from app.models.item import Item
+            from app.database import SessionLocal
+            db = SessionLocal()
+            item = db.query(Item).filter(Item.id == item_id).first()
+            db.close()
+            if not item:
+                raise ValueError(f"Item '{item_id}' not found for partition validation.")
+            if item.partition_capacity is None:
+                raise ValueError(f"Item '{item_id}' does not have a partition_capacity set.")
+            if v > item.partition_capacity:
+                raise ValueError(f"Quantity ({v}) cannot exceed partition_capacity ({item.partition_capacity}) of item '{item_id}'")
+        return v
 
 class PartitionUpdate(BaseModel):
-    item_id: Optional[str] = None  # ✅ ADD - Allow item changes
+    item_id: Optional[str] = None
     storage_section_id: Optional[str] = None
-    rfid_tag_id: Optional[str] = None  # ✅ ADD - Allow RFID changes
+    rfid_tag_id: Optional[str] = None
     quantity: Optional[int] = None
-    capacity: Optional[int] = None
     status: Optional[PartitionStatus] = None
 
-    @field_validator('item_id')  # ✅ ADD VALIDATOR
+    @field_validator('item_id')
     @classmethod
     def validate_item_id(cls, v: Optional[str]) -> Optional[str]:
         if v is not None:
@@ -70,7 +76,7 @@ class PartitionUpdate(BaseModel):
             return non_empty_string_validator('Storage Section ID')(v)
         return v
 
-    @field_validator('rfid_tag_id')  # ✅ ADD VALIDATOR
+    @field_validator('rfid_tag_id')
     @classmethod
     def validate_rfid_tag_id(cls, v: Optional[str]) -> Optional[str]:
         if v is not None:
@@ -79,13 +85,23 @@ class PartitionUpdate(BaseModel):
 
     @field_validator('quantity')
     @classmethod
-    def validate_quantity(cls, v: Optional[int]) -> Optional[int]:
-        return bounded_int_optional_validator(0, 10000, 'Quantity')(v)
-
-    @field_validator('capacity')
-    @classmethod
-    def validate_capacity(cls, v: Optional[int]) -> Optional[int]:
-        return bounded_int_optional_validator(1, 10000, 'Capacity')(v)
+    def validate_quantity(cls, v: Optional[int], info) -> Optional[int]:
+        if v is not None:
+            v = bounded_int_optional_validator(0, 10000, 'Quantity')(v)
+            item_id = info.data.get('item_id')
+            if item_id:
+                from app.models.item import Item
+                from app.database import SessionLocal
+                db = SessionLocal()
+                item = db.query(Item).filter(Item.id == item_id).first()
+                db.close()
+                if not item:
+                    raise ValueError(f"Item '{item_id}' not found for partition validation.")
+                if item.partition_capacity is None:
+                    raise ValueError(f"Item '{item_id}' does not have a partition_capacity set.")
+                if v > item.partition_capacity:
+                    raise ValueError(f"Quantity ({v}) cannot exceed partition_capacity ({item.partition_capacity}) of item '{item_id}'")
+        return v
 
 class PartitionResponse(PartitionBase):
     id: str
