@@ -43,142 +43,155 @@ def get_items(
     return items, total_count
 
 def create_item(db: Session, item: ItemCreate) -> Item:
-    """Create new item with optional image and auto-assigned measure_method"""
+    """Create new item with validation and image support"""
     if get_item(db, item.id):
         raise ValueError("Item with this ID already exists")
-    
+
+    # Image
     image_path = None
     if item.image:
-        try:
-            image_path = save_image_from_base64(item.id, item.image)
-            print(f"Image saved for item {item.id}: {image_path}")
-        except Exception as e:
-            print(f"Failed to save image for item {item.id}: {e}")
-            raise ValueError(f"Invalid image data: {str(e)}")
-    
+        image_path = save_image_from_base64(item.id, item.image)
+
+    # Enforce type-specific attributes
+    partition_capacity = item.partition_capacity if item.item_type == ItemType.PARTITION else None
+    container_item_weight = item.container_item_weight if item.item_type == ItemType.CONTAINER else None
+    container_weight = item.container_weight if item.item_type == ItemType.CONTAINER else None
+
     db_item = Item(
         id=item.id,
         name=item.name,
         manufacturer=item.manufacturer,
         item_type=item.item_type,
-        measure_method=item.measure_method,  # Auto-assigned by schema validation
-        unit=item.unit,
-        image_path=image_path
+        measure_method=item.measure_method,  # already validated
+        image_path=image_path,
+        partition_capacity=partition_capacity,
+        container_item_weight=container_item_weight,
+        container_weight=container_weight
     )
-    
+
     db.add(db_item)
     db.commit()
     db.refresh(db_item)
     return db_item
 
 def update_item(db: Session, item_id: str, item: ItemUpdate) -> Optional[Item]:
-    """Update item"""
+    """Update item with type-specific validation"""
     db_item = get_item(db, item_id)
     if not db_item:
         return None
-    
+
     update_data = item.model_dump(exclude_unset=True)
-    
+
+    # Handle ID update
     if 'id' in update_data and update_data['id'] != item_id:
         new_id = update_data.pop('id')
-        
         if get_item(db, new_id):
             raise ValueError(f"Item with ID '{new_id}' already exists")
-        
         db_item.id = new_id
-    
+
+    # Handle image
     if 'image' in update_data:
         image_value = update_data.pop('image')
-        
         if db_item.image_path:
             delete_image(db_item.image_path)
-        
         if image_value is None:
             db_item.image_path = None
         else:
-            try:
-                current_id = db_item.id
-                db_item.image_path = save_image_from_base64(current_id, image_value)
-                print(f"Image updated for item {current_id}: {db_item.image_path}")
-            except Exception as e:
-                print(f"Failed to update image for item {current_id}: {e}")
-                raise ValueError(f"Invalid image data: {str(e)}")
-    
-    if 'measure_method' in update_data:
-        update_data.pop('measure_method')
-    
+            db_item.image_path = save_image_from_base64(db_item.id, image_value)
+
+    # Remove measure_method (will auto-assign)
+    update_data.pop('measure_method', None)
+
+
+    # Prevent item_type change if there are associated partitions, large items, or containers
+    if 'item_type' in update_data and update_data['item_type'] != db_item.item_type:
+        from app.models.partition import Partition
+        from app.models.large_item import LargeItem
+        from app.models.container import Container
+        has_partition = db.query(Partition).filter(Partition.item_id == item_id).first() is not None
+        has_large_item = db.query(LargeItem).filter(LargeItem.item_id == item_id).first() is not None
+        has_container = db.query(Container).filter(Container.item_id == item_id).first() is not None
+        if has_partition or has_large_item or has_container:
+            raise ValueError("Cannot change item type: item has associated partitions, large items, or containers registered under it.")
+
+    # Assign attributes
     for key, value in update_data.items():
         setattr(db_item, key, value)
-    
+
+    # Enforce type-specific attributes
     if db_item.item_type == ItemType.PARTITION:
         db_item.measure_method = MeasureMethod.VISION
+        db_item.container_item_weight = None
+        db_item.container_weight = None
+        if db_item.partition_capacity is None:
+            raise ValueError("Partition must have partition_capacity")
     elif db_item.item_type == ItemType.LARGE_ITEM:
         db_item.measure_method = None
+        db_item.partition_capacity = None
+        db_item.container_item_weight = None
+        db_item.container_weight = None
     elif db_item.item_type == ItemType.CONTAINER:
         db_item.measure_method = MeasureMethod.WEIGHT
-    
+        db_item.partition_capacity = None
+        # Only set container_weight if not provided
+        if db_item.container_weight is None:
+            raise ValueError("Container must have container_weight defined")
+
     db.commit()
     db.refresh(db_item)
     return db_item
 
 def delete_item(db: Session, item_id: str) -> Optional[Item]:
-    """Delete item"""
     db_item = get_item(db, item_id)
     if not db_item:
         return None
-    
+
     from app.models.partition import Partition
     from app.models.large_item import LargeItem
     from app.models.container import Container
-    
-    partition_count = db.query(func.count(Partition.id)).filter(Partition.item_id == item_id).scalar()
-    large_item_count = db.query(func.count(LargeItem.id)).filter(LargeItem.item_id == item_id).scalar()
-    container_count = db.query(func.count(Container.id)).filter(Container.item_id == item_id).scalar()
-    
-    if partition_count > 0 or large_item_count > 0 or container_count > 0:
-        raise ValueError("Cannot delete item that has associated partitions, large items, or containers")
-    
-    # Delete image file
+
+    if db.query(func.count(Partition.id)).filter(Partition.item_id == item_id).scalar() > 0 \
+       or db.query(func.count(LargeItem.id)).filter(LargeItem.item_id == item_id).scalar() > 0 \
+       or db.query(func.count(Container.id)).filter(Container.item_id == item_id).scalar() > 0:
+        raise ValueError("Cannot delete item with associated partitions, large items, or containers")
+
     if db_item.image_path:
         delete_image(db_item.image_path)
-    
+
     db.delete(db_item)
     db.commit()
     return db_item
 
 def create_item_response(db: Session, item: Item, base_url: str = "") -> ItemResponse:
-    """Create ItemResponse from Item model"""
-    image_url = None
-    if item.image_path:
-        image_url = get_image_url(item.id, base_url)
-    
+    image_url = get_image_url(item.id, base_url) if item.image_path else None
     return ItemResponse(
         id=item.id,
         name=item.name,
         manufacturer=item.manufacturer,
         item_type=item.item_type,
         measure_method=item.measure_method,
-        unit=item.unit,
-        image_url=image_url
+        image_url=image_url,
+        partition_capacity=item.partition_capacity,
+        container_item_weight=item.container_item_weight,
+        container_weight=item.container_weight
     )
 
 def get_item_with_stats(db: Session, item_id: str, base_url: str = "") -> Optional[ItemStatsResponse]:
-    """Get item with detailed statistics"""
     item = get_item(db, item_id)
     if not item:
         return None
-    
+
     from app.models.partition import Partition
     from app.models.large_item import LargeItem
     from app.models.container import Container
-    
+
     partition_count = db.query(func.count(Partition.id)).filter(Partition.item_id == item_id).scalar() or 0
     large_item_count = db.query(func.count(LargeItem.id)).filter(LargeItem.item_id == item_id).scalar() or 0
     container_count = db.query(func.count(Container.id)).filter(Container.item_id == item_id).scalar() or 0
     total_instances = partition_count + large_item_count + container_count
-    
+
     item_response = create_item_response(db, item, base_url)
-    
+
     return ItemStatsResponse(
         **item_response.model_dump(),
         partition_count=partition_count,

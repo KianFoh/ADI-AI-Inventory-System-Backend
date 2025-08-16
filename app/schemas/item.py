@@ -15,17 +15,26 @@ class ItemBase(BaseModel):
     manufacturer: str
     item_type: ItemType
     measure_method: Optional[MeasureMethod] = None
-    unit: int
     image_url: Optional[str] = None
+
+    # Container-specific attributes
+    container_item_weight: Optional[float] = None
+    container_weight: Optional[float] = None
+
+    # Partition-specific attributes
+    partition_capacity: Optional[int] = None
 
 class ItemCreate(BaseModel):
     id: str
     name: str
     manufacturer: str
     item_type: ItemType
-    unit: int
     image: Optional[str] = None
     measure_method: Optional[MeasureMethod] = None
+
+    container_item_weight: Optional[float] = None
+    container_weight: Optional[float] = None
+    partition_capacity: Optional[int] = None
 
     @field_validator('id')
     @classmethod
@@ -42,31 +51,47 @@ class ItemCreate(BaseModel):
     def validate_manufacturer(cls, v: str) -> str:
         return non_empty_string_preserve_case_validator('Manufacturer')(v)
 
-    @field_validator('unit')
-    @classmethod
-    def validate_unit(cls, v: int) -> int:
-        return bounded_int_validator(1, 100, 'Unit')(v)
 
     @model_validator(mode='after')
-    def set_measure_method_based_on_type(self):
-        """Auto-assign measure_method based on item_type"""
+    def set_measure_and_validate_fields(self):
+        """Auto-assign measure_method and validate attributes based on item_type"""
+        # Auto-assign measure_method
         if self.item_type == ItemType.PARTITION:
             self.measure_method = MeasureMethod.VISION
         elif self.item_type == ItemType.LARGE_ITEM:
             self.measure_method = None
         elif self.item_type == ItemType.CONTAINER:
             self.measure_method = MeasureMethod.WEIGHT
-        
+
+        # Validation rules
+        if self.item_type == ItemType.PARTITION:
+            self.container_item_weight = None
+            self.container_weight = None
+            if self.partition_capacity is None:
+                raise ValueError("Partition must have partition_capacity defined")
+        elif self.item_type == ItemType.LARGE_ITEM:
+            self.container_item_weight = None
+            self.container_weight = None
+            if self.partition_capacity is not None:
+                raise ValueError("Large item cannot have partition_capacity")
+        elif self.item_type == ItemType.CONTAINER:
+            if self.partition_capacity is not None:
+                raise ValueError("Container cannot have partition_capacity")
+            if self.container_weight is None:
+                raise ValueError("Container must have container_weight defined")
         return self
 
 class ItemUpdate(BaseModel):
-    id: Optional[str] = None  # Added ID field for updates
+    id: Optional[str] = None
     name: Optional[str] = None
     manufacturer: Optional[str] = None
-    item_type: Optional[ItemType] = None  # Added item_type for updates
-    unit: Optional[int] = None
+    item_type: Optional[ItemType] = None
     image: Optional[str] = None
-    measure_method: Optional[MeasureMethod] = None  # Added for consistency
+    measure_method: Optional[MeasureMethod] = None
+
+    container_item_weight: Optional[float] = None
+    container_weight: Optional[float] = None
+    partition_capacity: Optional[int] = None
 
     @field_validator('id')
     @classmethod
@@ -89,27 +114,43 @@ class ItemUpdate(BaseModel):
             return non_empty_string_preserve_case_validator('Manufacturer')(v)
         return v
 
-    @field_validator('unit')
-    @classmethod
-    def validate_unit(cls, v: Optional[int]) -> Optional[int]:
-        return bounded_int_optional_validator(1, 100, 'Unit')(v)
 
     @model_validator(mode='after')
-    def set_measure_method_based_on_type(self):
-        """Auto-assign measure_method based on item_type if item_type is being updated"""
+    def set_measure_and_validate_fields(self):
+        """Auto-assign measure_method and validate attributes if item_type is updated"""
         if self.item_type is not None:
             if self.item_type == ItemType.PARTITION:
                 self.measure_method = MeasureMethod.VISION
+                self.container_item_weight = None
+                self.container_weight = None
+                if self.partition_capacity is None:
+                    raise ValueError("Partition must have partition_capacity defined")
             elif self.item_type == ItemType.LARGE_ITEM:
                 self.measure_method = None
+                self.container_item_weight = None
+                self.container_weight = None
+                if self.partition_capacity is not None:
+                    raise ValueError("Large item cannot have partition_capacity")
             elif self.item_type == ItemType.CONTAINER:
                 self.measure_method = MeasureMethod.WEIGHT
-        
+                if self.partition_capacity is not None:
+                    raise ValueError("Container cannot have partition_capacity")
+                if self.container_weight is None:
+                    raise ValueError("Container must have container_weight defined")
+                if self.container_item_weight is None:
+                    raise ValueError("Container must have container_item_weight defined")
         return self
 
 class ItemResponse(ItemBase):
     class Config:
         from_attributes = True
+
+    @model_validator(mode='after')
+    def fix_weights_for_non_container(self):
+        if self.item_type != ItemType.CONTAINER:
+            self.container_item_weight = None
+            self.container_weight = None
+        return self
 
 class ItemStatsResponse(ItemResponse):
     partition_count: int = 0
@@ -143,7 +184,6 @@ class PaginatedItemsResponse(BaseModel):
     @classmethod
     def create(cls, items: List[ItemResponse], total_count: int, page: int, page_size: int):
         total_pages = math.ceil(total_count / page_size) if total_count > 0 else 0
-        
         return cls(
             items=items,
             total_items=total_count,

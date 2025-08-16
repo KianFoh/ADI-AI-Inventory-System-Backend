@@ -34,8 +34,6 @@ def get_storage_sections(
     floor: Optional[str] = None,
     cabinet: Optional[str] = None,
     color: Optional[SectionColor] = None,
-    show_full_only: Optional[bool] = None,
-    show_empty_only: Optional[bool] = None
 ) -> Tuple[List[StorageSection], int]:
     """Get storage sections with pagination, search, and smart sorting"""
     query = db.query(StorageSection)
@@ -58,10 +56,6 @@ def get_storage_sections(
     if color:
         query = query.filter(StorageSection.color == color)
     
-    if show_full_only:
-        query = query.filter(StorageSection.used_units >= StorageSection.total_units)
-    if show_empty_only:
-        query = query.filter(StorageSection.used_units == 0)
     
     query = natural_sort_key_db(query)
     total_count = query.count()
@@ -108,9 +102,6 @@ def update_storage_section(db: Session, section_id: str, section: StorageSection
 def delete_storage_section(db: Session, section_id: str) -> Optional[StorageSection]:
     db_section = db.query(StorageSection).filter(StorageSection.id == section_id).first()
     if db_section:
-        if db_section.used_units > 0:
-            raise ValueError(f"Cannot delete storage section {section_id}. It contains {db_section.used_units} units of items.")
-        
         db.delete(db_section)
         db.commit()
     return db_section
@@ -135,72 +126,15 @@ def get_sections_by_color(db: Session, color: SectionColor) -> List[StorageSecti
     query = db.query(StorageSection).filter(StorageSection.color == color)
     return natural_sort_key_db(query).all()
 
-def add_units_to_section(db: Session, section_id: str, units_to_add: int) -> Optional[StorageSection]:
-    section = db.query(StorageSection).filter(StorageSection.id == section_id).first()
-    if section:
-        section.used_units += units_to_add
-        db.commit()
-        db.refresh(section)
-    return section
 
-def remove_units_from_section(db: Session, section_id: str, units_to_remove: int) -> Optional[StorageSection]:
-    section = db.query(StorageSection).filter(StorageSection.id == section_id).first()
-    if section:
-        section.used_units = max(0, section.used_units - units_to_remove)
-        db.commit()
-        db.refresh(section)
-    return section
 
-def can_add_units_to_section(db: Session, section_id: str, units_needed: int) -> tuple[bool, str]:
-    section = db.query(StorageSection).filter(StorageSection.id == section_id).first()
-    if not section:
-        return False, "Storage section not found"
-    
-    available_units = section.total_units - section.used_units
-    if available_units < units_needed:
-        return False, f"Not enough space. Available: {available_units}, Required: {units_needed}"
-    
-    return True, "Section has enough space"
 
-def update_section_units(db: Session, old_section_id: str, new_section_id: str, units: int) -> None:
-    if old_section_id:
-        remove_units_from_section(db, old_section_id, units)
-    if new_section_id:
-        add_units_to_section(db, new_section_id, units)
 
-def recalculate_section_used_units(db: Session, section_id: str) -> Optional[StorageSection]:
-    from app.models.partition import Partition
-    from app.models.large_item import LargeItem
-    from app.models.item import Item
-    
-    # ✅ FIXED: Changed units_required to unit
-    partition_units = db.query(func.coalesce(func.sum(Item.unit), 0)).join(
-        Partition, Partition.item_id == Item.id
-    ).filter(Partition.storage_section_id == section_id).scalar() or 0
-    
-    large_item_units = db.query(func.coalesce(func.sum(Item.unit), 0)).join(
-        LargeItem, LargeItem.item_id == Item.id
-    ).filter(LargeItem.storage_section_id == section_id).scalar() or 0
-    
-    total_used = partition_units + large_item_units
-    
-    section = db.query(StorageSection).filter(StorageSection.id == section_id).first()
-    if section:
-        section.used_units = total_used
-        db.commit()
-        db.refresh(section)
-    
-    return section
 
-def get_sections_with_available_units(db: Session, min_units: int = 1) -> List[StorageSection]:
-    query = db.query(StorageSection).filter(
-        StorageSection.total_units - StorageSection.used_units >= min_units
-    )
-    return natural_sort_key_db(query).all()
 
-def get_sections_by_utilization(db: Session, min_rate: float = 0.0, max_rate: float = 1.0) -> List[StorageSection]:
-    sections = db.query(StorageSection).all()
-    return [
-        section for section in sections 
-        if min_rate <= (section.used_units / section.total_units if section.total_units > 0 else 0) <= max_rate
-    ]
+
+
+
+
+
+

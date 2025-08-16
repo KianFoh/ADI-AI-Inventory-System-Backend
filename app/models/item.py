@@ -20,20 +20,19 @@ class Item(Base):
     manufacturer = Column(String(255), nullable=False, index=True)
     item_type = Column(Enum(ItemType), nullable=False)
     measure_method = Column(Enum(MeasureMethod), nullable=True)
-    unit = Column(Integer, nullable=False)
     image_path = Column(String(500), nullable=True)
-    
+
+    # Container-specific attributes
+    container_item_weight = Column(Float, nullable=True)
+    container_weight = Column(Float, nullable=True)
+
+    # Partition-specific attributes
+    partition_capacity = Column(Integer, nullable=True)
+
+    # Relationships
     partitions = relationship("Partition", back_populates="item")
     large_items = relationship("LargeItem", back_populates="item")
     containers = relationship("Container", back_populates="item")
     
     def __repr__(self):
-        return f"<Item(id='{self.id}', name='{self.name}', type='{self.item_type.value}', unit={self.unit})>"
-    
-    @classmethod
-    def get_available_item_types(cls):
-        return [item_type.value for item_type in ItemType]
-    
-    @classmethod
-    def get_available_measure_methods(cls):
-        return [method.value for method in MeasureMethod]
+        return f"<Item(id='{self.id}', name='{self.name}', type='{self.item_type.value}')>"

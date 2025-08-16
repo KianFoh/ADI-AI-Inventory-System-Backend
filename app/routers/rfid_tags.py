@@ -63,15 +63,6 @@ def get_unassigned_rfid_tags(db: Session = Depends(get_db)):
     tags = rfid_crud.get_unassigned_rfid_tags(db)
     return [RFIDTagResponse.model_validate(tag) for tag in tags]
 
-@router.get("/available", response_model=List[RFIDTagResponse])
-def get_available_tags_for_assignment(
-    limit: int = Query(50, ge=1, le=100, description="Maximum results"),
-    db: Session = Depends(get_db)
-):
-    """Get unassigned RFID tags available for assignment"""
-    tags = rfid_crud.get_available_rfid_tags_for_assignment(db, limit=limit)
-    return [RFIDTagResponse.model_validate(tag) for tag in tags]
-
 @router.get("/{tag_id}", response_model=RFIDTagResponse)
 def get_rfid_tag(tag_id: str, db: Session = Depends(get_db)):
     """Get RFID tag by ID"""
