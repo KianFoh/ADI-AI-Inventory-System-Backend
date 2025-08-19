@@ -32,7 +32,7 @@ def get_partitions(
         except ValueError:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid status. Must be one of: {[s.value for s in PartitionStatus]}"
+                detail={"field": "status", "message": f"Invalid status. Must be one of: {[s.value for s in PartitionStatus]}"}
             )
     
     partitions, total_count = partition_crud.get_partitions(
@@ -77,7 +77,7 @@ def get_partition(partition_id: str, db: Session = Depends(get_db)):
     if not partition:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Partition not found"
+            detail={"field": "partition_id", "message": "Partition not found"}
         )
     return PartitionResponse.model_validate(partition)
 
@@ -98,11 +98,11 @@ def update_partition(partition_id: str, partition: PartitionUpdate, db: Session 
         if not updated_partition:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Partition not found"
+                detail={"field": "partition_id", "message": "Partition not found"}
             )
         return PartitionResponse.model_validate(updated_partition)
     except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail={"field": "partition_id", "message": str(e)})
 
 @router.delete("/{partition_id}", response_model=PartitionResponse)
 def delete_partition(partition_id: str, db: Session = Depends(get_db)):
@@ -111,6 +111,6 @@ def delete_partition(partition_id: str, db: Session = Depends(get_db)):
     if not deleted_partition:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Partition not found"
+            detail={"field": "partition_id", "message": "Partition not found"}
         )
     return PartitionResponse.model_validate(deleted_partition)
