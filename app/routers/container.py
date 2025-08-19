@@ -32,7 +32,7 @@ def get_containers(
         except ValueError:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid status '{status_filter}'. Must be one of: {[s.value for s in ContainerStatus]}"
+                detail={"field": "status", "message": f"Invalid status '{status_filter}'. Must be one of: {[s.value for s in ContainerStatus]}"}
             )
     containers, total_count = container_crud.get_containers(
         db, page=page, page_size=page_size, search=search, status=status_enum
@@ -74,7 +74,7 @@ def get_container(container_id: str, db: Session = Depends(get_db)):
     if not container:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Container not found"
+            detail={"field": "container_id", "message": "Container not found"}
         )
     return ContainerResponse.model_validate(container)
 
@@ -98,13 +98,13 @@ def update_container(container_id: str, container: ContainerUpdate, db: Session 
         if not updated_container:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Container not found"
+                detail={"field": "container_id", "message": "Container not found"}
             )
         return ContainerResponse.model_validate(updated_container)
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
+            detail={"field": "container_id", "message": str(e)}
         )
 
 @router.delete("/{container_id}", response_model=ContainerResponse)
@@ -114,6 +114,6 @@ def delete_container(container_id: str, db: Session = Depends(get_db)):
     if not deleted_container:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Container not found"
+            detail={"field": "container_id", "message": "Container not found"}
         )
     return ContainerResponse.model_validate(deleted_container)

@@ -32,7 +32,7 @@ def get_large_items(
         except ValueError:
             raise HTTPException(
                 status_code=http_status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid status. Must be one of: {[s.value for s in LargeItemStatus]}"
+                detail={"field": "status", "message": f"Invalid status. Must be one of: {[s.value for s in LargeItemStatus]}"}
             )
     
     large_items, total_count = large_item_crud.get_large_items(
@@ -77,7 +77,7 @@ def get_large_item(large_item_id: str, db: Session = Depends(get_db)):
     if not large_item:
         raise HTTPException(
             status_code=http_status.HTTP_404_NOT_FOUND,
-            detail="Large item not found"
+            detail={"field": "large_item_id", "message": "Large item not found"}
         )
     return LargeItemResponse.model_validate(large_item)
 
@@ -101,13 +101,13 @@ def update_large_item(large_item_id: str, large_item: LargeItemUpdate, db: Sessi
         if not updated_li:
             raise HTTPException(
                 status_code=http_status.HTTP_404_NOT_FOUND,
-                detail="Large item not found"
+                detail={"field": "large_item_id", "message": "Large item not found"}
             )
         return LargeItemResponse.model_validate(updated_li)
     except ValueError as e:
         raise HTTPException(
             status_code=http_status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
+            detail={"field": "large_item_id", "message": str(e)}
         )
 
 @router.delete("/{large_item_id}", response_model=LargeItemResponse)
@@ -117,6 +117,6 @@ def delete_large_item(large_item_id: str, db: Session = Depends(get_db)):
     if not deleted_li:
         raise HTTPException(
             status_code=http_status.HTTP_404_NOT_FOUND,
-            detail="Large item not found"
+            detail={"field": "large_item_id", "message": "Large item not found"}
         )
     return LargeItemResponse.model_validate(deleted_li)

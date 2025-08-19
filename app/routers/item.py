@@ -41,7 +41,7 @@ def get_items(
         try:
             item_type_enum = ItemType(item_type.lower())
         except ValueError:
-            raise HTTPException(status_code=400, detail=f"Invalid item type. Must be one of {[t.value for t in ItemType]}")
+            raise HTTPException(status_code=400, detail={"field": "item_type", "message": f"Invalid item type. Must be one of {[t.value for t in ItemType]}"})
 
     items, total_count = item_crud.get_items(
         db, page=page, page_size=page_size, search=search,
@@ -87,7 +87,7 @@ def get_measure_methods():
 def get_item(request: Request, item_id: str, db: Session = Depends(get_db)):
     item = item_crud.get_item(db, item_id)
     if not item:
-        raise HTTPException(status_code=404, detail="Item not found")
+        raise HTTPException(status_code=404, detail={"field": "item_id", "message": "Item not found"})
     base_url = get_base_url(request)
     return item_crud.create_item_response(db, item, base_url)
 
@@ -96,7 +96,7 @@ def get_item_stats(request: Request, item_id: str, db: Session = Depends(get_db)
     base_url = get_base_url(request)
     stats = item_crud.get_item_with_stats(db, item_id, base_url)
     if not stats:
-        raise HTTPException(status_code=404, detail="Item not found")
+        raise HTTPException(status_code=404, detail={"field": "item_id", "message": "Item not found"})
     return stats
 
 
@@ -106,10 +106,10 @@ def get_item_stats(request: Request, item_id: str, db: Session = Depends(get_db)
 def get_item_image(item_id: str, db: Session = Depends(get_db)):
     item = item_crud.get_item(db, item_id)
     if not item or not item.image_path:
-        raise HTTPException(status_code=404, detail="Image not found")
+        raise HTTPException(status_code=404, detail={"field": "item_id", "message": "Image not found"})
     image_path = get_image_full_path(item.image_path)
     if not image_path:
-        raise HTTPException(status_code=404, detail="Image file not found")
+        raise HTTPException(status_code=404, detail={"field": "item_id", "message": "Image file not found"})
     return FileResponse(image_path)
 
 
@@ -120,7 +120,7 @@ def get_items_by_type(request: Request, item_type: str, db: Session = Depends(ge
     try:
         item_type_enum = ItemType(item_type.lower())
     except ValueError:
-        raise HTTPException(status_code=400, detail=f"Invalid item type. Must be one of {[t.value for t in ItemType]}")
+        raise HTTPException(status_code=400, detail={"field": "item_type", "message": f"Invalid item type. Must be one of {[t.value for t in ItemType]}"})
     items = item_crud.get_items_by_type(db, item_type_enum)
     base_url = get_base_url(request)
     return [item_crud.create_item_response(db, item, base_url) for item in items]
@@ -141,7 +141,7 @@ def create_item(request: Request, item: ItemCreate, db: Session = Depends(get_db
         base_url = get_base_url(request)
         return item_crud.create_item_response(db, created_item, base_url)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail={"field": "item_id", "message": str(e)})
 
 @router.put("/{item_id}", response_model=ItemResponse)
 def update_item(request: Request, item_id: str, item: ItemUpdate, db: Session = Depends(get_db)):
@@ -149,26 +149,26 @@ def update_item(request: Request, item_id: str, item: ItemUpdate, db: Session = 
     try:
         updated_item = item_crud.update_item(db, item_id, item)
         if not updated_item:
-            raise HTTPException(status_code=404, detail="Item not found")
+            raise HTTPException(status_code=404, detail={"field": "item_id", "message": "Item not found"})
         base_url = get_base_url(request)
         return item_crud.create_item_response(db, updated_item, base_url)
     except IntegrityError as e:
         if "violates foreign key constraint" in str(e):
-            raise HTTPException(status_code=400, detail="Cannot update or delete item: it is still referenced by partitions, large items, or containers.")
-        raise HTTPException(status_code=400, detail=str(e))
+            raise HTTPException(status_code=400, detail={"field": "item_id", "message": "Cannot update or delete item: it is still referenced by partitions, large items, or containers."})
+        raise HTTPException(status_code=400, detail={"field": "item_id", "message": str(e)})
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail={"field": "item_id", "message": str(e)})
 
 @router.delete("/{item_id}", response_model=ItemResponse)
 def delete_item(request: Request, item_id: str, db: Session = Depends(get_db)):
     try:
         deleted_item = item_crud.delete_item(db, item_id)
         if not deleted_item:
-            raise HTTPException(status_code=404, detail="Item not found")
+            raise HTTPException(status_code=404, detail={"field": "item_id", "message": "Item not found"})
         base_url = get_base_url(request)
         return item_crud.create_item_response(db, deleted_item, base_url)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail={"field": "item_id", "message": str(e)})
 
 
 # ------------------ Counts ------------------ #
@@ -182,7 +182,7 @@ def get_item_count_by_type(item_type: str, db: Session = Depends(get_db)):
     try:
         item_type_enum = ItemType(item_type.lower())
     except ValueError:
-        raise HTTPException(status_code=400, detail=f"Invalid item type. Must be one of {[t.value for t in ItemType]}")
+        raise HTTPException(status_code=400, detail={"field": "item_type", "message": f"Invalid item type. Must be one of {[t.value for t in ItemType]}"})
     return item_crud.get_item_count_by_type(db, item_type_enum)
 
 @router.get("/count/manufacturers", response_model=int)

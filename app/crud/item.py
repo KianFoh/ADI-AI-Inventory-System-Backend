@@ -45,7 +45,7 @@ def get_items(
 def create_item(db: Session, item: ItemCreate) -> Item:
     """Create new item with validation and image support"""
     if get_item(db, item.id):
-        raise ValueError("Item with this ID already exists")
+        raise ValueError({"field": "id", "message": "Item with this ID already exists"})
 
     # Image
     image_path = None
@@ -86,7 +86,7 @@ def update_item(db: Session, item_id: str, item: ItemUpdate) -> Optional[Item]:
     if 'id' in update_data and update_data['id'] != item_id:
         new_id = update_data.pop('id')
         if get_item(db, new_id):
-            raise ValueError(f"Item with ID '{new_id}' already exists")
+            raise ValueError({"field": "id", "message": f"Item with ID '{new_id}' already exists"})
         db_item.id = new_id
 
     # Handle image
@@ -112,7 +112,7 @@ def update_item(db: Session, item_id: str, item: ItemUpdate) -> Optional[Item]:
         has_large_item = db.query(LargeItem).filter(LargeItem.item_id == item_id).first() is not None
         has_container = db.query(Container).filter(Container.item_id == item_id).first() is not None
         if has_partition or has_large_item or has_container:
-            raise ValueError("Cannot change item type: item has associated partitions, large items, or containers registered under it.")
+            raise ValueError({"field": "item_type", "message": "Cannot change item type: item has associated partitions, large items, or containers registered under it."})
 
     # Assign attributes
     for key, value in update_data.items():
@@ -124,7 +124,7 @@ def update_item(db: Session, item_id: str, item: ItemUpdate) -> Optional[Item]:
         db_item.container_item_weight = None
         db_item.container_weight = None
         if db_item.partition_capacity is None:
-            raise ValueError("Partition must have partition_capacity")
+            raise ValueError({"field": "partition_capacity", "message": "Partition must have partition_capacity"})
     elif db_item.item_type == ItemType.LARGE_ITEM:
         db_item.measure_method = None
         db_item.partition_capacity = None
@@ -135,7 +135,7 @@ def update_item(db: Session, item_id: str, item: ItemUpdate) -> Optional[Item]:
         db_item.partition_capacity = None
         # Only set container_weight if not provided
         if db_item.container_weight is None:
-            raise ValueError("Container must have container_weight defined")
+            raise ValueError({"field": "container_weight", "message": "Container must have container_weight defined"})
 
     db.commit()
     db.refresh(db_item)
@@ -153,7 +153,7 @@ def delete_item(db: Session, item_id: str) -> Optional[Item]:
     if db.query(func.count(Partition.id)).filter(Partition.item_id == item_id).scalar() > 0 \
        or db.query(func.count(LargeItem.id)).filter(LargeItem.item_id == item_id).scalar() > 0 \
        or db.query(func.count(Container.id)).filter(Container.item_id == item_id).scalar() > 0:
-        raise ValueError("Cannot delete item with associated partitions, large items, or containers")
+        raise ValueError({"field": "item_id", "message": "Cannot delete item with associated partitions, large items, or containers"})
 
     if db_item.image_path:
         delete_image(db_item.image_path)

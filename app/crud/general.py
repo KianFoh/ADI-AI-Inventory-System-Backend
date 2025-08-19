@@ -11,12 +11,9 @@ def _validate_item_type(db: Session, item_id: str, expected_type: ItemType) -> I
     """Validate item exists and has correct type"""
     item = db.query(Item).filter(Item.id == item_id).first()
     if not item:
-        raise ValueError(f"Item with ID '{item_id}' not found")
+        raise ValueError({"field": "item_id", "message": f"Item with ID '{item_id}' not found"})
     if item.item_type != expected_type:
-        raise ValueError(
-            f"Item '{item_id}' must be of type '{expected_type.value}', "
-            f"but found '{item.item_type.value}'"
-        )
+        raise ValueError({"field": "item_id", "message": f"Item '{item_id}' must be of type '{expected_type.value}', but found '{item.item_type.value}'"})
     return item
 
 
@@ -24,7 +21,7 @@ def _validate_storage_section_exists(db: Session, storage_section_id: str) -> St
     """Validate storage section exists"""
     storage_section = db.query(StorageSection).filter(StorageSection.id == storage_section_id).first()
     if not storage_section:
-        raise ValueError(f"Storage section '{storage_section_id}' not found")
+        raise ValueError({"field": "storage_section_id", "message": f"Storage section '{storage_section_id}' not found"})
     return storage_section
 
 
@@ -32,9 +29,9 @@ def _assign_rfid_tag(db: Session, rfid_tag_id: str) -> RFIDTag:
     """Validate and assign RFID tag"""
     rfid_tag = db.query(RFIDTag).filter(RFIDTag.id == rfid_tag_id).first()
     if not rfid_tag:
-        raise ValueError(f"RFID tag '{rfid_tag_id}' not found")
+        raise ValueError({"field": "rfid_tag_id", "message": f"RFID tag '{rfid_tag_id}' not found"})
     if rfid_tag.assigned:
-        raise ValueError(f"RFID tag '{rfid_tag_id}' is not available")
+        raise ValueError({"field": "rfid_tag_id", "message": f"RFID tag '{rfid_tag_id}' is not available"})
 
     rfid_tag.assigned = True
     return rfid_tag
@@ -110,12 +107,9 @@ def update_entity_with_rfid_and_storage(
         if 'item_id' in update_data:
             new_item = db.query(Item).filter(Item.id == update_data['item_id']).first()
             if not new_item:
-                raise ValueError(f"Item '{update_data['item_id']}' not found")
+                raise ValueError({"field": "item_id", "message": f"Item '{update_data['item_id']}' not found"})
             if new_item.item_type != expected_item_type:
-                raise ValueError(
-                    f"Item '{update_data['item_id']}' must be of type {expected_item_type.value}, "
-                    f"got {new_item.item_type.value}"
-                )
+                raise ValueError({"field": "item_id", "message": f"Item '{update_data['item_id']}' must be of type {expected_item_type.value}, got {new_item.item_type.value}"})
 
         if 'storage_section_id' in update_data:
             _validate_storage_section_exists(db, update_data['storage_section_id'])
@@ -124,9 +118,9 @@ def update_entity_with_rfid_and_storage(
             old_rfid_tag = db.query(RFIDTag).filter(RFIDTag.id == db_entity.rfid_tag_id).first()
             new_rfid_tag = db.query(RFIDTag).filter(RFIDTag.id == update_data['rfid_tag_id']).first()
             if not new_rfid_tag:
-                raise ValueError(f"RFID tag '{update_data['rfid_tag_id']}' not found")
+                raise ValueError({"field": "rfid_tag_id", "message": f"RFID tag '{update_data['rfid_tag_id']}' not found"})
             if new_rfid_tag.assigned:
-                raise ValueError(f"RFID tag '{update_data['rfid_tag_id']}' is already assigned")
+                raise ValueError({"field": "rfid_tag_id", "message": f"RFID tag '{update_data['rfid_tag_id']}' is already assigned"})
             if old_rfid_tag:
                 old_rfid_tag.assigned = False
             new_rfid_tag.assigned = True

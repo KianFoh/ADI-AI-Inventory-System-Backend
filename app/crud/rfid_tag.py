@@ -57,7 +57,7 @@ def delete_rfid_tag(db: Session, tag_id: str) -> Optional[RFIDTagResponse]:
     db_tag = db.query(RFIDTag).filter(RFIDTag.id == tag_id).first()
     if db_tag:
         if db_tag.assigned:
-            raise ValueError(f"Cannot delete assigned RFID tag {tag_id}. Unassign it first.")
+            raise ValueError({"field": "tag_id", "message": f"Cannot delete assigned RFID tag {tag_id}. Unassign it first."})
         
         result = RFIDTagResponse.model_validate(db_tag)
         db.delete(db_tag)

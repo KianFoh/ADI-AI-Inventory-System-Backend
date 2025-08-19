@@ -91,7 +91,7 @@ def _get_transactions_by_field(field_name: str, value: str, page: int, page_size
         "user_name": transaction_crud.get_transactions_by_user
     }
     if field_name not in crud_map:
-        raise HTTPException(status_code=400, detail="Invalid field for filtering")
+        raise HTTPException(status_code=400, detail={"field": field_name, "message": "Invalid field for filtering"})
     transactions, total_count = crud_map[field_name](db, value, skip=skip, limit=page_size)
     return [TransactionResponse.model_validate(txn, from_attributes=True) for txn in transactions]
 
@@ -125,7 +125,7 @@ def get_transactions_by_user(user_name: str, page: int = Query(1, ge=1), page_si
 def get_transaction(transaction_id: str, db: Session = Depends(get_db)):
     transaction = transaction_crud.get_transaction(db, transaction_id=transaction_id)
     if not transaction:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transaction not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"field": "transaction_id", "message": "Transaction not found"})
     return TransactionResponse.model_validate(transaction, from_attributes=True)
 
 # Bulk create transactions
@@ -154,7 +154,7 @@ def create_transaction(transaction: TransactionCreate, db: Session = Depends(get
 def delete_transaction(transaction_id: str, db: Session = Depends(get_db)):
     deleted = transaction_crud.delete_transaction(db, transaction_id=transaction_id)
     if not deleted:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transaction not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"field": "transaction_id", "message": "Transaction not found"})
     return {"message": "Transaction deleted successfully"}
 
 # Total count

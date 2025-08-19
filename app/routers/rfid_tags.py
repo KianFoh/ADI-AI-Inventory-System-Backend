@@ -70,7 +70,7 @@ def get_rfid_tag(tag_id: str, db: Session = Depends(get_db)):
     if not tag:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="RFID tag not found"
+            detail={"field": "tag_id", "message": "RFID tag not found"}
         )
     return tag
 
@@ -82,9 +82,8 @@ def create_rfid_tag(tag: RFIDTagCreate, db: Session = Depends(get_db)):
     if existing_tag:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="RFID tag with this ID already exists"
+            detail={"field": "tag_id", "message": "RFID tag with this ID already exists"}
         )
-    
     return rfid_crud.create_rfid_tag(db=db, tag=tag)
 
 @router.put("/{tag_id}", response_model=RFIDTagResponse)
@@ -94,7 +93,7 @@ def update_rfid_tag(tag_id: str, tag: RFIDTagUpdate, db: Session = Depends(get_d
     if not updated_tag:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="RFID tag not found"
+            detail={"field": "tag_id", "message": "RFID tag not found"}
         )
     return updated_tag
 
@@ -106,13 +105,13 @@ def delete_rfid_tag(tag_id: str, db: Session = Depends(get_db)):
         if not deleted_tag:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="RFID tag not found"
+                detail={"field": "tag_id", "message": "RFID tag not found"}
             )
         return deleted_tag
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
+            detail={"field": "tag_id", "message": str(e)}
         )
 
 @router.post("/{tag_id}/assign", response_model=RFIDTagResponse)
@@ -122,7 +121,7 @@ def assign_rfid_tag(tag_id: str, db: Session = Depends(get_db)):
     if not tag:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="RFID tag not found or already assigned"
+            detail={"field": "tag_id", "message": "RFID tag not found or already assigned"}
         )
     return tag
 
@@ -133,7 +132,7 @@ def unassign_rfid_tag(tag_id: str, db: Session = Depends(get_db)):
     if not tag:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="RFID tag not found or already unassigned"
+            detail={"field": "tag_id", "message": "RFID tag not found or already unassigned"}
         )
     return tag
 

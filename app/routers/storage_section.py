@@ -34,7 +34,7 @@ def get_storage_sections(
         except ValueError:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid color. Must be one of: {[c.value for c in SectionColor]}"
+                detail={"field": "color", "message": f"Invalid color. Must be one of: {[c.value for c in SectionColor]}"}
             )
     
     sections, total_count = section_crud.get_storage_sections(
@@ -88,7 +88,7 @@ def get_sections_by_color(
     except ValueError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid color. Must be one of: {[c.value for c in SectionColor]}"
+            detail={"field": "color", "message": f"Invalid color. Must be one of: {[c.value for c in SectionColor]}"}
         )
     
     sections = section_crud.get_sections_by_color(db, color_enum)
@@ -101,7 +101,7 @@ def get_storage_section(section_id: str, db: Session = Depends(get_db)):
     if not section:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Storage section not found"
+            detail={"field": "section_id", "message": "Storage section not found"}
         )
     return StorageSectionResponse.model_validate(section)
 
@@ -114,7 +114,7 @@ def create_storage_section(section: StorageSectionCreate, db: Session = Depends(
     if section_crud.get_storage_section(db, section_id=section_id):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Storage section with this configuration already exists"
+            detail={"field": "section_id", "message": "Storage section with this configuration already exists"}
         )
     
     created_section = section_crud.create_storage_section(db=db, section=section)
@@ -127,7 +127,7 @@ def update_storage_section(section_id: str, section: StorageSectionUpdate, db: S
     if not updated_section:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Storage section not found"
+            detail={"field": "section_id", "message": "Storage section not found"}
         )
     return StorageSectionResponse.model_validate(updated_section)
 
@@ -139,13 +139,13 @@ def delete_storage_section(section_id: str, db: Session = Depends(get_db)):
         if not deleted_section:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Storage section not found"
+                detail={"field": "section_id", "message": "Storage section not found"}
             )
         return StorageSectionResponse.model_validate(deleted_section)
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
+            detail={"field": "section_id", "message": str(e)}
         )
 
 @router.get("/count/total", response_model=int)

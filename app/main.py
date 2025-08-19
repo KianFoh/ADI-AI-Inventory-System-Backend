@@ -1,4 +1,6 @@
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI, Depends, Request
+from fastapi.responses import JSONResponse
+from fastapi.exception_handlers import RequestValidationError
 from app.routers import users, transaction, storage_section, rfid_tags, partition, large_item, item, container
 from app.security import verify_api_key
 
@@ -8,6 +10,20 @@ app = FastAPI(
     description="Inventory Management System API",
     version="1.0.0"
 )
+
+# Global handler for Pydantic validation errors
+@app.exception_handler(RequestValidationError)
+async def fastapi_validation_exception_handler(request: Request, exc: RequestValidationError):
+    errors = []
+    for err in exc.errors():
+        errors.append({
+            "field": ".".join(str(loc) for loc in err["loc"]),
+            "message": err["msg"]
+        })
+    return JSONResponse(
+        status_code=422,
+        content={"detail": errors}
+    )
 
 # Protected endpoints (require Bearer token)
 @app.get("/", dependencies=[Depends(verify_api_key)])
