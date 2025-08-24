@@ -60,8 +60,21 @@ class StorageSectionUpdate(BaseModel):
 
 class StorageSectionResponse(StorageSectionBase):
     id: str
-    class Config:
-        from_attributes = True
+    in_use: bool
+
+    @classmethod
+    def model_validate(cls, obj):
+        # Compute in_use by checking references
+        db = getattr(obj, '_sa_instance_state', None)
+        # If obj is an ORM instance, check relationships
+        in_use = False
+        if hasattr(obj, 'containers') and obj.containers:
+            in_use = True
+        elif hasattr(obj, 'partitions') and obj.partitions:
+            in_use = True
+        elif hasattr(obj, 'large_items') and obj.large_items:
+            in_use = True
+        return super().model_validate({**obj.__dict__, 'in_use': in_use})
 
 class PaginatedStorageSectionsResponse(BaseModel):
     sections: List[StorageSectionResponse]
