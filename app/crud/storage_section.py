@@ -82,17 +82,23 @@ def create_storage_section(db: Session, section: StorageSectionCreate) -> Storag
 def update_storage_section(db: Session, section_id: str, section: StorageSectionUpdate) -> Optional[StorageSection]:
     db_section = db.query(StorageSection).filter(StorageSection.id == section_id).first()
     if db_section:
+        # Check references
+        from app.models.container import Container
+        from app.models.partition import Partition
+        from app.models.large_item import LargeItem
+        referenced = db.query(Container).filter(Container.storage_section_id == section_id).first() or \
+                     db.query(Partition).filter(Partition.storage_section_id == section_id).first() or \
+                     db.query(LargeItem).filter(LargeItem.storage_section_id == section_id).first()
+        if referenced:
+            raise ValueError({"field": "none", "message": "Cannot edit storage section: it is referenced by a container, partition, or large item."})
         update_data = section.model_dump(exclude_unset=True)
-        
         if any(key in update_data for key in ['floor', 'cabinet', 'layer', 'color']):
             new_floor = update_data.get('floor', db_section.floor)
             new_cabinet = update_data.get('cabinet', db_section.cabinet)
             new_layer = update_data.get('layer', db_section.layer)
             new_color = update_data.get('color', db_section.color)
-            
             new_id = StorageSection.generate_id(new_floor, new_cabinet, new_layer, new_color.value)
             update_data['id'] = new_id
-        
         for key, value in update_data.items():
             setattr(db_section, key, value)
         db.commit()
@@ -102,6 +108,15 @@ def update_storage_section(db: Session, section_id: str, section: StorageSection
 def delete_storage_section(db: Session, section_id: str) -> Optional[StorageSection]:
     db_section = db.query(StorageSection).filter(StorageSection.id == section_id).first()
     if db_section:
+        # Check references
+        from app.models.container import Container
+        from app.models.partition import Partition
+        from app.models.large_item import LargeItem
+        referenced = db.query(Container).filter(Container.storage_section_id == section_id).first() or \
+                     db.query(Partition).filter(Partition.storage_section_id == section_id).first() or \
+                     db.query(LargeItem).filter(LargeItem.storage_section_id == section_id).first()
+        if referenced:
+            raise ValueError({"field": "none", "message": "Cannot delete storage section: it is referenced by a container, partition, or large item."})
         db.delete(db_section)
         db.commit()
     return db_section

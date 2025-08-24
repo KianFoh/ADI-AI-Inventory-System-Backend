@@ -21,16 +21,21 @@ async def fastapi_validation_exception_handler(request: Request, exc: RequestVal
         # Remove "body" prefix if present
         if loc and loc[0] == "body":
             loc = loc[1:]
+        field_name = ".".join(str(l) for l in loc)
         msg = err["msg"]
         # Remove common error prefixes using regex
         msg = re.sub(r"^(value is not a valid|Value error,|Value error|type error,|type error|none is not an allowed value|none is not allowed|not a valid)[:\s]*", "", msg, flags=re.IGNORECASE)
         # If message contains a colon, take only the part after the colon
         if ':' in msg:
             msg = msg.split(':', 1)[1].strip()
+        # Replace 'input should be a valid string' with '<Field> cannot be empty'
+        if msg.strip().lower() == "input should be a valid string":
+            last_field = field_name.split('.')[-1] if field_name else "Field"
+            msg = f"{last_field.capitalize()} cannot be empty"
         # Remove trailing punctuation and whitespace
         msg = msg.strip().rstrip('.')
         errors.append({
-            "field": ".".join(str(l) for l in loc),
+            "field": field_name,
             "message": msg
         })
     return JSONResponse(
