@@ -4,6 +4,9 @@ from typing import List, Optional
 from app.database import get_db
 from app.crud import storage_section as section_crud
 from app.models.storage_section import SectionColor, StorageSection
+from app.models.container import Container
+from app.models.partition import Partition
+from app.models.large_item import LargeItem
 from app.schemas.storage_section import (
     StorageSectionCreate, 
     StorageSectionUpdate, 
@@ -15,6 +18,13 @@ router = APIRouter(
     prefix="/storage-sections",
     tags=["storage-sections"]
 )
+
+def is_section_referenced(db: Session, section_id: str) -> bool:
+    return (
+        db.query(Container).filter(Container.storage_section_id == section_id).first() or
+        db.query(Partition).filter(Partition.storage_section_id == section_id).first() or
+        db.query(LargeItem).filter(LargeItem.storage_section_id == section_id).first()
+    )
 
 @router.get("/", response_model=PaginatedStorageSectionsResponse)
 def get_storage_sections(
@@ -123,6 +133,16 @@ def create_storage_section(section: StorageSectionCreate, db: Session = Depends(
 @router.put("/{section_id}", response_model=StorageSectionResponse)
 def update_storage_section(section_id: str, section: StorageSectionUpdate, db: Session = Depends(get_db)):
     """Update storage section"""
+    # Generate the new ID from the updated attributes
+    new_id = StorageSection.generate_id(
+        section.floor, section.cabinet, section.layer, section.color.value
+    )
+    # If the new ID is different from the current and already exists, block update
+    if new_id != section_id and section_crud.get_storage_section(db, section_id=new_id):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=[{"field": "section_id", "message": "Storage section with this configuration already exists"}]
+        )
     try:
         updated_section = section_crud.update_storage_section(db, section_id=section_id, section=section)
         if not updated_section:
@@ -140,21 +160,18 @@ def update_storage_section(section_id: str, section: StorageSectionUpdate, db: S
 
 @router.delete("/{section_id}", response_model=StorageSectionResponse)
 def delete_storage_section(section_id: str, db: Session = Depends(get_db)):
-    """Delete storage section"""
-    try:
-        deleted_section = section_crud.delete_storage_section(db, section_id=section_id)
-        if not deleted_section:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=[{"field": "section_id", "message": "Storage section not found"}]
-            )
-        return StorageSectionResponse.model_validate(deleted_section)
-    except ValueError as e:
-        err = e.args[0] if e.args and isinstance(e.args[0], dict) else {"field": "section_id", "message": str(e)}
+    if is_section_referenced(db, section_id):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=[err]
+            detail=[{"field": "none", "message": "Cannot delete storage section: it is referenced by a container, partition, or large item."}]
         )
+    deleted_section = section_crud.delete_storage_section(db, section_id=section_id)
+    if not deleted_section:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=[{"field": "section_id", "message": "Storage section not found"}]
+        )
+    return StorageSectionResponse.model_validate(deleted_section)
 
 @router.get("/count/total", response_model=int)
 def get_section_count(db: Session = Depends(get_db)):
