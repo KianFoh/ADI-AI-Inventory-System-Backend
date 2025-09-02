@@ -8,12 +8,7 @@ class RFIDTagBase(BaseModel):
     assigned: bool = False
 
 class RFIDTagCreate(BaseModel):
-    id: str
-
-    @field_validator('id')
-    @classmethod
-    def validate_tag_id(cls, v: str) -> str:
-        return non_empty_string_validator("Tag ID")(v)
+    pass
 
 class RFIDTagUpdate(BaseModel):
     assigned: bool 

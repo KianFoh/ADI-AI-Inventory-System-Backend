@@ -34,11 +34,8 @@ def get_rfid_tags(
     
     return tags, total_count
 
-def create_rfid_tag(db: Session, tag: RFIDTagCreate) -> RFIDTagResponse:
-    db_tag = RFIDTag(
-        id=tag.id,
-        assigned=False
-    )
+def create_rfid_tag(db: Session) -> RFIDTagResponse:
+    db_tag = RFIDTag(assigned=False)
     db.add(db_tag)
     db.commit()
     db.refresh(db_tag)
