@@ -75,16 +75,9 @@ def get_rfid_tag(tag_id: str, db: Session = Depends(get_db)):
     return tag
 
 @router.post("/", response_model=RFIDTagResponse, status_code=status.HTTP_201_CREATED)
-def create_rfid_tag(tag: RFIDTagCreate, db: Session = Depends(get_db)):
-    """Create new RFID tag"""
-    # Check if tag already exists
-    existing_tag = rfid_crud.get_rfid_tag(db, tag_id=tag.id)
-    if existing_tag:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"field": "tag_id", "message": "RFID tag with this ID already exists"}
-        )
-    return rfid_crud.create_rfid_tag(db=db, tag=tag)
+def create_rfid_tag(db: Session = Depends(get_db)):
+    """Create new RFID tag with auto-generated ID"""
+    return rfid_crud.create_rfid_tag(db=db)
 
 @router.put("/{tag_id}", response_model=RFIDTagResponse)
 def update_rfid_tag(tag_id: str, tag: RFIDTagUpdate, db: Session = Depends(get_db)):
