@@ -25,7 +25,7 @@ def get_base_url(request: Request) -> str:
 
 # ------------------ List & Search ------------------ #
 
-@router.get("/", response_model=PaginatedItemsResponse)
+@router.get("/", response_model=PaginatedItemsResponse, response_model_exclude_none=True)
 def get_items(
     request: Request,
     page: int = Query(1, ge=1),
@@ -49,7 +49,8 @@ def get_items(
     )
 
     base_url = get_base_url(request)
-    item_responses = [item_crud.create_item_response(db, item, base_url) for item in items]
+    # use CRUD helper that returns ItemStatsResponse (type-specific extra fields)
+    item_responses = [item_crud.build_item_with_stats(db, item, base_url) for item in items]
 
     return PaginatedItemsResponse.create(
         items=item_responses,

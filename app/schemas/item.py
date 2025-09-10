@@ -1,13 +1,7 @@
 from pydantic import BaseModel, field_validator, computed_field, model_validator
 from typing import Optional, List
-import math
+from math import ceil
 from app.models.item import ItemType, MeasureMethod
-from app.validators import (
-    string_length_validator,
-    non_empty_string_preserve_case_validator,
-    bounded_int_validator,
-    bounded_int_optional_validator
-)
 
 class ItemBase(BaseModel):
     id: str
@@ -153,27 +147,21 @@ class ItemResponse(ItemBase):
         return self
 
 class ItemStatsResponse(ItemResponse):
-    partition_count: int = 0
-    large_item_count: int = 0
-    container_count: int = 0
-    total_instances: int = 0
-    
-    @computed_field
-    @property
-    def has_instances(self) -> bool:
-        return self.total_instances > 0
-    
-    @computed_field
-    @property
-    def instance_distribution(self) -> dict:
-        return {
-            "partitions": self.partition_count,
-            "large_items": self.large_item_count,
-            "containers": self.container_count
-        }
+    total_quantity: Optional[int] = None
+    total_capacity: Optional[int] = None
+    total_weight: Optional[float] = None
+    # counts for how many instances of each type are registered under the item
+    partition_count: Optional[int] = None
+    container_count: Optional[int] = None
+
+    # Pydantic v2 config: ignore extra keys and exclude None fields from output
+    model_config = {
+        "extra": "ignore",
+        "exclude_none": True
+    }
 
 class PaginatedItemsResponse(BaseModel):
-    items: List[ItemResponse]
+    items: List[ItemStatsResponse]   # ensure items use ItemStatsResponse so extra fields are preserved
     total_items: int
     page: int
     page_size: int
@@ -182,8 +170,8 @@ class PaginatedItemsResponse(BaseModel):
     has_previous: bool
 
     @classmethod
-    def create(cls, items: List[ItemResponse], total_count: int, page: int, page_size: int):
-        total_pages = math.ceil(total_count / page_size) if total_count > 0 else 0
+    def create(cls, items, total_count, page, page_size):
+        total_pages = ceil(total_count / page_size) if page_size else 1
         return cls(
             items=items,
             total_items=total_count,

@@ -3,7 +3,7 @@ from sqlalchemy import func, or_
 from app.models.item import Item, ItemType, MeasureMethod
 from app.schemas.item import ItemCreate, ItemUpdate, ItemResponse, ItemStatsResponse
 from app.utils.image import save_image_from_base64, delete_image, get_image_url
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Dict
 
 def get_item(db: Session, item_id: str) -> Optional[Item]:
     return db.query(Item).filter(Item.id == item_id).first()
@@ -230,3 +230,81 @@ def get_item_count_by_type(db: Session, item_type: ItemType) -> int:
 def get_manufacturer_count(db: Session) -> int:
     """Get count of unique manufacturers"""
     return db.query(func.count(func.distinct(Item.manufacturer))).scalar() or 0
+
+def _to_dict_safe(pydantic_obj):
+    try:
+        return pydantic_obj.model_dump()  # pydantic v2
+    except Exception:
+        try:
+            return pydantic_obj.dict()
+        except Exception:
+            return pydantic_obj
+
+def get_partition_stats(db: Session, item_id: str) -> Dict[str, int]:
+    from app.models.partition import Partition
+    # number of partitions and total quantity
+    partition_count = db.query(func.count(Partition.id)).filter(Partition.item_id == item_id).scalar() or 0
+    total_quantity = db.query(func.coalesce(func.sum(Partition.quantity), 0)).filter(Partition.item_id == item_id).scalar() or 0
+
+    # get configured capacity per partition from item
+    item = db.query(Item).filter(Item.id == item_id).first()
+    per_capacity = int(item.partition_capacity) if item and item.partition_capacity else 0
+    total_capacity = int(partition_count) * per_capacity
+
+    return {
+        "partition_count": int(partition_count),
+        "total_quantity": int(total_quantity),
+        "total_capacity": int(total_capacity),
+    }
+
+def get_large_item_stats(db: Session, item_id: str) -> Dict[str, int]:
+    from app.models.large_item import LargeItem
+    large_count = db.query(func.count(LargeItem.id)).filter(LargeItem.item_id == item_id).scalar() or 0
+    return {
+        "large_item_count": int(large_count),
+        "total_quantity": int(large_count)
+    }
+
+def get_container_stats(db: Session, item_id: str) -> Dict[str, object]:
+    from app.models.container import Container
+    container_count = db.query(func.count(Container.id)).filter(Container.item_id == item_id).scalar() or 0
+    total_weight = db.query(func.sum(Container.items_weight)).filter(Container.item_id == item_id).scalar()
+    total_quantity = db.query(func.coalesce(func.sum(Container.quantity), 0)).filter(Container.item_id == item_id).scalar() or 0
+
+    return {
+        "container_count": int(container_count),
+        "total_weight": float(total_weight) if total_weight is not None else 0.0,
+        "total_quantity": int(total_quantity)
+    }
+
+def build_item_with_stats(db: Session, item: Item, base_url: str) -> ItemStatsResponse:
+    base_resp = create_item_response(db, item, base_url)
+    base_data = _to_dict_safe(base_resp)
+
+    stats = {}
+    if item.item_type == ItemType.PARTITION:
+        p = get_partition_stats(db, item.id)
+        stats = {
+            "total_quantity": p.get("total_quantity", 0),
+            "total_capacity": p.get("total_capacity", 0),
+            "partition_count": p.get("partition_count", 0),
+        }
+    elif item.item_type == ItemType.LARGE_ITEM:
+        l = get_large_item_stats(db, item.id)
+        stats = {
+            "total_quantity": l.get("total_quantity", 0)
+        }
+    elif item.item_type == ItemType.CONTAINER:
+        c = get_container_stats(db, item.id)
+        # always include total_weight and the container count
+        stats = {
+            "total_weight": c.get("total_weight", 0.0),
+            "container_count": c.get("container_count", 0)
+        }
+        # include total_quantity only if item has container_item_weight configured
+        if getattr(item, "container_item_weight", None):
+            stats["total_quantity"] = c.get("total_quantity", 0)
+
+    merged = {**base_data, **stats}
+    # validate/serialize to ItemStatsResponse so FastAPI returns only defined fields
+    return ItemStatsResponse.model_validate(merged)
