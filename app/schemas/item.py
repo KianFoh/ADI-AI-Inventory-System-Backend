@@ -2,6 +2,7 @@ from pydantic import BaseModel, field_validator, computed_field, model_validator
 from typing import Optional, List
 from math import ceil
 from app.models.item import ItemType, MeasureMethod
+from app.validators import non_empty_string_preserve_case_validator, string_length_validator
 
 class ItemBase(BaseModel):
     id: str
