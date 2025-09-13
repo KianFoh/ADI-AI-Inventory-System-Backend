@@ -19,6 +19,13 @@ class ItemBase(BaseModel):
     # Partition-specific attributes
     partition_capacity: Optional[int] = None
 
+    # New shared metadata fields (present on DB & responses)
+    process: Optional[str] = None
+    tooling_used: Optional[str] = None
+    vendor_pn: Optional[str] = None
+    sap_pn: Optional[str] = None
+    package_used: Optional[str] = None
+
 class ItemCreate(BaseModel):
     id: str
     name: str
@@ -30,6 +37,24 @@ class ItemCreate(BaseModel):
     container_item_weight: Optional[float] = None
     container_weight: Optional[float] = None
     partition_capacity: Optional[int] = None
+
+    # New request fields
+    process: str
+    tooling_used: Optional[str] = None
+    vendor_pn: Optional[str] = None
+    sap_pn: Optional[str] = None
+    package_used: Optional[str] = None
+
+    @field_validator('process')
+    @classmethod
+    def validate_process(cls, v: str) -> str:
+        if v is None:
+            raise ValueError("process is required")
+        v = v.strip().upper()
+        import re
+        if not re.fullmatch(r'[A-Z0-9]+', v):
+            raise ValueError("process must contain only uppercase letters and digits, no spaces")
+        return v
 
     @field_validator('id')
     @classmethod
@@ -87,6 +112,24 @@ class ItemUpdate(BaseModel):
     container_item_weight: Optional[float] = None
     container_weight: Optional[float] = None
     partition_capacity: Optional[int] = None
+
+    # New updatable fields
+    process: Optional[str] = None
+    tooling_used: Optional[str] = None
+    vendor_pn: Optional[str] = None
+    sap_pn: Optional[str] = None
+    package_used: Optional[str] = None
+
+    @field_validator('process')
+    @classmethod
+    def validate_process_optional(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        v = v.strip().upper()
+        import re
+        if not re.fullmatch(r'[A-Z0-9]+', v):
+            raise ValueError("process must contain only uppercase letters and digits, no spaces")
+        return v
 
     @field_validator('id')
     @classmethod

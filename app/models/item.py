@@ -29,6 +29,13 @@ class Item(Base):
     # Partition-specific attributes
     partition_capacity = Column(Integer, nullable=True)
 
+    # New fields
+    process = Column(String(50), nullable=False, index=True)   # uppercase letters/numbers, validated in schema
+    tooling_used = Column(String(255), nullable=True)
+    vendor_pn = Column(String(255), nullable=True)             # vendor part number
+    sap_pn = Column(String(255), nullable=True)                # SAP part number
+    package_used = Column(String(255), nullable=True)
+
     # Relationships
     partitions = relationship("Partition", back_populates="item")
     large_items = relationship("LargeItem", back_populates="item")

@@ -3,7 +3,7 @@ from sqlalchemy import func, or_
 from app.models.item import Item, ItemType, MeasureMethod
 from app.schemas.item import ItemCreate, ItemUpdate, ItemResponse, ItemStatsResponse
 from app.utils.image import save_image_from_base64, delete_image, get_image_url
-from typing import List, Optional, Tuple, Dict
+from typing import List, Optional, Tuple, Dict, Union
 
 def get_item(db: Session, item_id: str) -> Optional[Item]:
     return db.query(Item).filter(Item.id == item_id).first()
@@ -42,31 +42,60 @@ def get_items(
     
     return items, total_count
 
-def create_item(db: Session, item: ItemCreate) -> Item:
-    """Create new item with validation and image support"""
-    if get_item(db, item.id):
+def _normalize_input_to_dict(obj: Union[ItemCreate, ItemUpdate, dict]) -> dict:
+    if isinstance(obj, dict):
+        return obj
+    try:
+        return obj.model_dump()
+    except Exception:
+        try:
+            return obj.dict()
+        except Exception:
+            return {}
+
+def create_item(db: Session, item: Union[ItemCreate, dict]) -> Item:
+    """Create new item with validation and image support. Accepts ItemCreate or dict."""
+    data = _normalize_input_to_dict(item)
+
+    # ensure required id/name etc present
+    item_id = data.get("id")
+    if item_id and get_item(db, item_id):
         raise ValueError({"field": "id", "message": "Item with this ID already exists"})
 
-    # Image
+    # save image if provided (image is base64 string)
+    image_b64 = data.get("image")
     image_path = None
-    if item.image:
-        image_path = save_image_from_base64(item.id, item.image)
+    if image_b64:
+        # if id not provided yet, db id must exist; require id in payload
+        if not item_id:
+            raise ValueError({"field": "id", "message": "id is required when sending image"})
+        image_path = save_image_from_base64(item_id, image_b64)
 
-    # Enforce type-specific attributes
-    partition_capacity = item.partition_capacity if item.item_type == ItemType.PARTITION else None
-    container_item_weight = item.container_item_weight if item.item_type == ItemType.CONTAINER else None
-    container_weight = item.container_weight if item.item_type == ItemType.CONTAINER else None
+    # normalize/convert enums if they are string values
+    itype = data.get("item_type")
+    if isinstance(itype, str):
+        itype = ItemType(itype)  # will raise if invalid
+    mmethod = data.get("measure_method")
+    if isinstance(mmethod, str):
+        mmethod = MeasureMethod(mmethod)
 
+    # build SQLAlchemy model instance including new fields
     db_item = Item(
-        id=item.id,
-        name=item.name,
-        manufacturer=item.manufacturer,
-        item_type=item.item_type,
-        measure_method=item.measure_method,  # already validated
+        id=item_id,
+        name=data.get("name"),
+        manufacturer=data.get("manufacturer"),
+        item_type=itype,
+        measure_method=mmethod,
         image_path=image_path,
-        partition_capacity=partition_capacity,
-        container_item_weight=container_item_weight,
-        container_weight=container_weight
+        partition_capacity=data.get("partition_capacity"),
+        container_item_weight=data.get("container_item_weight"),
+        container_weight=data.get("container_weight"),
+        # new fields
+        process=data.get("process"),
+        tooling_used=data.get("tooling_used"),
+        vendor_pn=data.get("vendor_pn"),
+        sap_pn=data.get("sap_pn"),
+        package_used=data.get("package_used"),
     )
 
     db.add(db_item)
@@ -74,22 +103,20 @@ def create_item(db: Session, item: ItemCreate) -> Item:
     db.refresh(db_item)
     return db_item
 
-def update_item(db: Session, item_id: str, item: ItemUpdate) -> Optional[Item]:
-    """Update item with type-specific validation"""
+def update_item(db: Session, item_id: str, item: Union[ItemUpdate, dict]) -> Optional[Item]:
+    """Update item with type-specific validation. Accepts ItemUpdate or dict."""
     db_item = get_item(db, item_id)
     if not db_item:
         return None
 
-    update_data = item.model_dump(exclude_unset=True)
+    update_data = _normalize_input_to_dict(item)
+    # combine enum normalization if provided as strings
+    if "item_type" in update_data and isinstance(update_data["item_type"], str):
+        update_data["item_type"] = ItemType(update_data["item_type"])
+    if "measure_method" in update_data and isinstance(update_data["measure_method"], str):
+        update_data["measure_method"] = MeasureMethod(update_data["measure_method"])
 
-    # Handle ID update
-    if 'id' in update_data and update_data['id'] != item_id:
-        new_id = update_data.pop('id')
-        if get_item(db, new_id):
-            raise ValueError({"field": "id", "message": f"Item with ID '{new_id}' already exists"})
-        db_item.id = new_id
-
-    # Handle image
+    # Handle image field
     if 'image' in update_data:
         image_value = update_data.pop('image')
         if db_item.image_path:
@@ -99,26 +126,11 @@ def update_item(db: Session, item_id: str, item: ItemUpdate) -> Optional[Item]:
         else:
             db_item.image_path = save_image_from_base64(db_item.id, image_value)
 
-    # Remove measure_method (will auto-assign)
-    update_data.pop('measure_method', None)
-
-
-    # Prevent item_type change if there are associated partitions, large items, or containers
-    if 'item_type' in update_data and update_data['item_type'] != db_item.item_type:
-        from app.models.partition import Partition
-        from app.models.large_item import LargeItem
-        from app.models.container import Container
-        has_partition = db.query(Partition).filter(Partition.item_id == item_id).first() is not None
-        has_large_item = db.query(LargeItem).filter(LargeItem.item_id == item_id).first() is not None
-        has_container = db.query(Container).filter(Container.item_id == item_id).first() is not None
-        if has_partition or has_large_item or has_container:
-            raise ValueError({"field": "item_type", "message": "Cannot change item type: item has associated partitions, large items, or containers registered under it."})
-
-    # Assign attributes
+    # assign other fields (includes new metadata fields)
     for key, value in update_data.items():
         setattr(db_item, key, value)
 
-    # Enforce type-specific attributes
+    # Enforce type-specific attributes (existing logic)
     if db_item.item_type == ItemType.PARTITION:
         db_item.measure_method = MeasureMethod.VISION
         db_item.container_item_weight = None
@@ -133,7 +145,6 @@ def update_item(db: Session, item_id: str, item: ItemUpdate) -> Optional[Item]:
     elif db_item.item_type == ItemType.CONTAINER:
         db_item.measure_method = MeasureMethod.WEIGHT
         db_item.partition_capacity = None
-        # Only set container_weight if not provided
         if db_item.container_weight is None:
             raise ValueError({"field": "container_weight", "message": "Container must have container_weight defined"})
 
@@ -164,17 +175,23 @@ def delete_item(db: Session, item_id: str) -> Optional[Item]:
 
 def create_item_response(db: Session, item: Item, base_url: str = "") -> ItemResponse:
     image_url = get_image_url(item.id, base_url) if item.image_path else None
-    return ItemResponse(
-        id=item.id,
-        name=item.name,
-        manufacturer=item.manufacturer,
-        item_type=item.item_type,
-        measure_method=item.measure_method,
-        image_url=image_url,
-        partition_capacity=item.partition_capacity,
-        container_item_weight=item.container_item_weight,
-        container_weight=item.container_weight
-    )
+    return ItemResponse.model_validate({
+        "id": item.id,
+        "name": item.name,
+        "manufacturer": item.manufacturer,
+        "item_type": item.item_type,
+        "measure_method": item.measure_method,
+        "image_url": image_url,
+        "container_item_weight": item.container_item_weight,
+        "container_weight": item.container_weight,
+        "partition_capacity": item.partition_capacity,
+        # new fields
+        "process": item.process,
+        "tooling_used": item.tooling_used,
+        "vendor_pn": item.vendor_pn,
+        "sap_pn": item.sap_pn,
+        "package_used": item.package_used,
+    })
 
 def get_item_with_stats(db: Session, item_id: str, base_url: str = "") -> Optional[ItemStatsResponse]:
     item = get_item(db, item_id)
