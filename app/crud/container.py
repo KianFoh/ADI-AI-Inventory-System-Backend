@@ -1,7 +1,7 @@
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
 from app.models.container import Container, ContainerStatus
-from app.models.item import ItemType
+from app.models.item import Item, ItemType, ContainerStat
 from app.schemas.container import ContainerCreate, ContainerUpdate
 from app.crud.general import (
     create_entity_with_rfid_and_storage,
@@ -10,6 +10,8 @@ from app.crud.general import (
 )
 from typing import List, Optional, Tuple
 import math
+# call status updater from item CRUD
+from app.crud.item import _update_container_status
 
 
 def get_container(db: Session, container_id: str) -> Optional[Container]:
@@ -50,10 +52,20 @@ def get_containers(
 
 
 def calculate_quantity(db: Session, item_id: str, items_weight: float) -> Optional[int]:
-    from app.models.item import Item
+    # Prefer configured container_item_weight from ContainerStat
+    cs = db.query(ContainerStat).filter(ContainerStat.item_id == item_id).first()
+    if cs and cs.container_item_weight:
+        try:
+            return int(math.ceil(items_weight / float(cs.container_item_weight)))
+        except Exception:
+            return None
+    # fallback to Item only if stat not configured
     item = db.query(Item).filter(Item.id == item_id).first()
     if item and getattr(item, "container_item_weight", None):
-        return int(math.ceil(items_weight / item.container_item_weight))
+        try:
+            return int(math.ceil(items_weight / item.container_item_weight))
+        except Exception:
+            return None
     return None
 
 def create_container(db: Session, container: ContainerCreate) -> Container:
@@ -68,7 +80,7 @@ def create_container(db: Session, container: ContainerCreate) -> Container:
         "status": ContainerStatus.AVAILABLE,
     }
 
-    return create_entity_with_rfid_and_storage(
+    created = create_entity_with_rfid_and_storage(
         db=db,
         entity_class=Container,
         entity_data=entity_data,
@@ -77,6 +89,15 @@ def create_container(db: Session, container: ContainerCreate) -> Container:
         rfid_tag_id=container.rfid_tag_id,
         expected_item_type=ItemType.CONTAINER,
     )
+    try:
+        db.refresh(created)
+        _update_container_status(db, created.item_id)
+        item = db.query(Item).filter(Item.id == created.item_id).first()
+        if item:
+            db.refresh(item)
+    except Exception:
+        pass
+    return created
 
 def update_container(db: Session, container_id: str, container: ContainerUpdate) -> Optional[Container]:
     """Update container using generic CRUD function"""
@@ -91,18 +112,39 @@ def update_container(db: Session, container_id: str, container: ContainerUpdate)
             item_id = item_id if item_id is not None else current.item_id
             items_weight = items_weight if items_weight is not None else current.items_weight
             update_data["quantity"] = calculate_quantity(db, item_id, items_weight)
-    return update_entity_with_rfid_and_storage(
+    updated = update_entity_with_rfid_and_storage(
         db=db,
         entity_class=Container,
         entity_id=container_id,
         update_data=update_data,
         expected_item_type=ItemType.CONTAINER,
     )
-
+    if updated:
+        try:
+            db.refresh(updated)
+            _update_container_status(db, updated.item_id)
+            item = db.query(Item).filter(Item.id == updated.item_id).first()
+            if item:
+                db.refresh(item)
+        except Exception:
+            pass
+    return updated
 
 def delete_container(db: Session, container_id: str) -> Optional[Container]:
     """Delete container using generic CRUD function"""
-    return delete_entity_with_rfid_and_storage(db, Container, container_id)
+    # fetch item_id for updater after deletion
+    current = db.query(Container).filter(Container.id == container_id).first()
+    item_id = current.item_id if current else None
+    deleted = delete_entity_with_rfid_and_storage(db, Container, container_id)
+    if deleted and item_id:
+        try:
+            _update_container_status(db, item_id)
+            item = db.query(Item).filter(Item.id == item_id).first()
+            if item:
+                db.refresh(item)
+        except Exception:
+            pass
+    return deleted
 
 
 def get_containers_by_item(db: Session, item_id: str) -> List[Container]:

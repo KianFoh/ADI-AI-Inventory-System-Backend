@@ -1,7 +1,7 @@
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func, or_
 from app.models.large_item import LargeItem, LargeItemStatus
-from app.models.item import Item, ItemType
+from app.models.item import Item, ItemType, LargeItemStat
 from app.models.storage_section import StorageSection
 from app.models.rfid_tag import RFIDTag
 from app.schemas.large_item import LargeItemCreate, LargeItemUpdate
@@ -11,6 +11,8 @@ from app.crud.general import (
     update_entity_with_rfid_and_storage
 )
 from typing import List, Optional, Tuple
+# import updater
+from app.crud.item import _update_largeitem_status
 
 def get_large_item(db: Session, large_item_id: str) -> Optional[LargeItem]:
     return db.query(LargeItem).options(
@@ -58,7 +60,7 @@ def create_large_item(db: Session, large_item: LargeItemCreate) -> LargeItem:
         "status": LargeItemStatus.AVAILABLE
     }
     
-    return create_entity_with_rfid_and_storage(
+    created = create_entity_with_rfid_and_storage(
         db=db,
         entity_class=LargeItem,
         entity_data=entity_data,
@@ -67,20 +69,56 @@ def create_large_item(db: Session, large_item: LargeItemCreate) -> LargeItem:
         rfid_tag_id=large_item.rfid_tag_id,
         expected_item_type=ItemType.LARGE_ITEM
     )
+    try:
+        db.refresh(created)
+        # recompute and persist totals + stock_status
+        _update_largeitem_status(db, created.item_id)
+        # refresh parent Item and LargeItemStat so responses reflect new totals
+        item = db.query(Item).filter(Item.id == created.item_id).first()
+        if item:
+            db.refresh(item)
+        from app.models.item import LargeItemStat as _LargeItemStat
+        ls = db.query(_LargeItemStat).filter(_LargeItemStat.item_id == created.item_id).first()
+        if ls:
+            db.refresh(ls)
+    except Exception:
+        pass
+    return created
 
 def update_large_item(db: Session, large_item_id: str, large_item: LargeItemUpdate) -> Optional[LargeItem]:
     update_data = large_item.model_dump(exclude_unset=True)
     
-    return update_entity_with_rfid_and_storage(
+    updated = update_entity_with_rfid_and_storage(
         db=db,
         entity_class=LargeItem,
         entity_id=large_item_id,
         update_data=update_data,
         expected_item_type=ItemType.LARGE_ITEM
     )
+    if updated:
+        try:
+            db.refresh(updated)
+            _update_largeitem_status(db, updated.item_id)
+            item = db.query(Item).filter(Item.id == updated.item_id).first()
+            if item:
+                db.refresh(item)
+        except Exception:
+            pass
+    return updated
 
 def delete_large_item(db: Session, large_item_id: str) -> Optional[LargeItem]:
-    return delete_entity_with_rfid_and_storage(db, LargeItem, large_item_id)
+    current = db.query(LargeItem).filter(LargeItem.id == large_item_id).first()
+    item_id = current.item_id if current else None
+    deleted = delete_entity_with_rfid_and_storage(db, LargeItem, large_item_id)
+    if deleted and item_id:
+        try:
+            _update_largeitem_status(db, item_id)
+            item = db.query(Item).filter(Item.id == item_id).first()
+            if item:
+                db.refresh(item)
+        except Exception:
+            pass
+    return deleted
 
 def get_large_items_by_item(db: Session, item_id: str) -> List[LargeItem]:
     return db.query(LargeItem).options(
