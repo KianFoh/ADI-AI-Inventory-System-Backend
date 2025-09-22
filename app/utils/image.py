@@ -20,61 +20,66 @@ def ensure_images_directory():
 
 def save_image_from_base64(item_id: str, base64_data: str) -> str:
     """
-    Save base64 image data to file and return relative path
+    Save base64 image data to file, convert to JPEG and resize to 640x480.
+    Returns relative path like "resource/images/{item_id}.jpg".
     """
-    # Always ensure directory exists before saving
     ensure_images_directory()
-    
+
     try:
-        # Handle data URL format (data:image/jpeg;base64,...)
-        if base64_data.startswith('data:'):
-            image_part = base64_data.split(',')[1]
+        # Extract base64 part if data URL provided
+        if base64_data.startswith("data:"):
+            try:
+                image_part = base64_data.split(",", 1)[1]
+            except IndexError:
+                raise ValueError("Invalid data URL")
         else:
             image_part = base64_data
-        
-        # Decode base64
-        image_bytes = base64.b64decode(image_part)
-        
-        # Use Pillow to open and validate the image
+
+        # Normalize whitespace and padding
+        image_part = image_part.strip().replace(" ", "")
+
+        try:
+            image_bytes = base64.b64decode(image_part, validate=True)
+        except Exception as e:
+            raise ValueError("Invalid base64 image data")
+
+        # Open image with Pillow
         try:
             with Image.open(io.BytesIO(image_bytes)) as img:
-                # Get the image format
-                img_format = img.format.lower() if img.format else 'jpeg'
-                
-                # Convert format names to file extensions
-                format_to_ext = {
-                    'jpeg': 'jpg',
-                    'jpg': 'jpg',
-                    'png': 'png',
-                    'gif': 'gif',
-                    'bmp': 'bmp',
-                    'webp': 'webp'
-                }
-                
-                file_ext = format_to_ext.get(img_format, 'jpg')
-                
-                # Create filename with item ID
-                filename = f"{item_id}.{file_ext}"
+                # Force convert to RGB for JPEG and handle palette/transparency
+                img = img.convert("RGB")
+
+                # Resize to exact 640x480
+                target_size = (640, 480)
+                img = img.resize(target_size, Image.LANCZOS)
+
+                # Prepare filename and path (always .jpg)
+                filename = f"{item_id}.jpg"
                 file_path = IMAGES_DIR / filename
-                
-                # Convert to RGB if necessary (for JPEG)
-                if file_ext == 'jpg' and img.mode in ('RGBA', 'P'):
-                    img = img.convert('RGB')
-                
-                # Save the image
-                img.save(file_path, format=img_format.upper() if img_format != 'jpg' else 'JPEG', quality=85)
-                
+
+                # Remove other files with same item_id but different extensions
+                for p in IMAGES_DIR.glob(f"{item_id}.*"):
+                    try:
+                        if p.name != filename:
+                            p.unlink()
+                    except Exception:
+                        # ignore deletion errors
+                        pass
+
+                # Save as JPEG
+                img.save(file_path, format="JPEG", quality=85, optimize=True)
+
         except Exception as e:
-            raise ValueError(f"Invalid image format or corrupted image: {str(e)}")
-        
-        print(f"Image saved: {file_path}")
-        
-        # Return relative path (using forward slashes for cross-platform compatibility)
+            raise ValueError("Invalid image format or corrupted image")
+
         return f"resource/images/{filename}"
-        
+
+    except ValueError:
+        # re-raise ValueError so callers can handle standardized errors
+        raise
     except Exception as e:
-        print(f"Error saving image for item {item_id}: {e}")
-        raise ValueError(f"Failed to save image: {str(e)}")
+        # generic failure
+        raise ValueError(f"Failed to save image: {e}")
 
 def delete_image(image_path: str):
     """Delete image file"""

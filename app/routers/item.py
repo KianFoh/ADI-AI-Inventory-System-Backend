@@ -13,6 +13,7 @@ from app.schemas.item import (
     PaginatedItemsResponse
 )
 from app.utils.image import get_image_full_path
+import re
 
 router = APIRouter(
     prefix="/items",
@@ -25,7 +26,7 @@ def get_base_url(request: Request) -> str:
 
 # ------------------ List & Search ------------------ #
 
-@router.get("/", response_model=PaginatedItemsResponse)
+@router.get("/", response_model=PaginatedItemsResponse, response_model_exclude_none=True)
 def get_items(
     request: Request,
     page: int = Query(1, ge=1),
@@ -49,7 +50,8 @@ def get_items(
     )
 
     base_url = get_base_url(request)
-    item_responses = [item_crud.create_item_response(db, item, base_url) for item in items]
+    # use CRUD helper that returns ItemStatsResponse (type-specific extra fields)
+    item_responses = [item_crud.build_item_with_stats(db, item, base_url) for item in items]
 
     return PaginatedItemsResponse.create(
         items=item_responses,
@@ -136,28 +138,45 @@ def get_items_by_manufacturer(request: Request, manufacturer: str, db: Session =
 
 @router.post("/", response_model=ItemResponse, status_code=201)
 def create_item(request: Request, item: ItemCreate, db: Session = Depends(get_db)):
+    # process validated by schema; ensure uppercase and no spaces
+    process = item.process.strip().upper()
+    # combine for stored name
+    stored_name = f"{process}-{item.name.strip()}"
+    # prepare dict payload (we combine name but keep process separate)
+    payload = item.model_dump()
+    payload["name"] = stored_name
+    payload["process"] = process
+
     try:
-        created_item = item_crud.create_item(db, item)
-        base_url = get_base_url(request)
-        return item_crud.create_item_response(db, created_item, base_url)
+        created_item = item_crud.create_item(db, payload)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail={"field": "item_id", "message": str(e)})
+        raise HTTPException(status_code=400, detail=e.args[0] if isinstance(e, ValueError) else str(e))
+
+    base_url = get_base_url(request)
+    return item_crud.create_item_response(db, created_item, base_url)
 
 @router.put("/{item_id}", response_model=ItemResponse)
 def update_item(request: Request, item_id: str, item: ItemUpdate, db: Session = Depends(get_db)):
-    from sqlalchemy.exc import IntegrityError
-    try:
-        updated_item = item_crud.update_item(db, item_id, item)
-        if not updated_item:
+    update_payload = item.model_dump(exclude_unset=True)
+
+    # If process/name present, combine to stored name
+    proc = update_payload.get("process")
+    name_val = update_payload.get("name")
+    if proc is not None or name_val is not None:
+        db_item = item_crud.get_item(db, item_id)
+        if not db_item:
             raise HTTPException(status_code=404, detail={"field": "item_id", "message": "Item not found"})
-        base_url = get_base_url(request)
-        return item_crud.create_item_response(db, updated_item, base_url)
-    except IntegrityError as e:
-        if "violates foreign key constraint" in str(e):
-            raise HTTPException(status_code=400, detail={"field": "item_id", "message": "Cannot update or delete item: it is still referenced by partitions, large items, or containers."})
-        raise HTTPException(status_code=400, detail={"field": "item_id", "message": str(e)})
+        current_process = proc.strip().upper() if proc is not None else (db_item.process or "")
+        current_name_part = name_val.strip() if name_val is not None else db_item.name[len(current_process):] if db_item.name.startswith(current_process) else db_item.name
+        update_payload["name"] = f"{current_process}{current_name_part}"
+        update_payload["process"] = current_process
+
+    try:
+        updated_item = item_crud.update_item(db, item_id, update_payload)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail={"field": "item_id", "message": str(e)})
+        raise HTTPException(status_code=400, detail=e.args[0] if isinstance(e, ValueError) else str(e))
+    base_url = get_base_url(request)
+    return item_crud.create_item_response(db, updated_item, base_url)
 
 @router.delete("/{item_id}", response_model=ItemResponse)
 def delete_item(request: Request, item_id: str, db: Session = Depends(get_db)):
