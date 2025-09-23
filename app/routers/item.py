@@ -85,21 +85,21 @@ def get_measure_methods():
 
 # ------------------ Single Item ------------------ #
 
-@router.get("/{item_id}", response_model=ItemResponse)
+@router.get("/{item_id}", response_model=ItemStatsResponse, response_model_exclude_none=True)
 def get_item(request: Request, item_id: str, db: Session = Depends(get_db)):
     item = item_crud.get_item(db, item_id)
     if not item:
         raise HTTPException(status_code=404, detail={"field": "item_id", "message": "Item not found"})
     base_url = get_base_url(request)
-    return item_crud.create_item_response(db, item, base_url)
+    return item_crud.build_item_with_stats(db, item, base_url)
 
-@router.get("/{item_id}/stats", response_model=ItemStatsResponse)
+@router.get("/{item_id}/stats", response_model=ItemStatsResponse, response_model_exclude_none=True)
 def get_item_stats(request: Request, item_id: str, db: Session = Depends(get_db)):
-    base_url = get_base_url(request)
-    stats = item_crud.get_item_with_stats(db, item_id, base_url)
-    if not stats:
+    item = item_crud.get_item(db, item_id)
+    if not item:
         raise HTTPException(status_code=404, detail={"field": "item_id", "message": "Item not found"})
-    return stats
+    base_url = get_base_url(request)
+    return item_crud.build_item_with_stats(db, item, base_url)
 
 
 # ------------------ Item Images ------------------ #

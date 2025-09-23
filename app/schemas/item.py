@@ -27,6 +27,7 @@ class ContainerStatResponse(BaseModel):
     container_item_weight: Optional[float] = None
     container_weight: Optional[float] = None
     total_weight: Optional[float] = None
+    total_quantity: Optional[int] = None
     high_threshold: Optional[float] = None
     low_threshold: Optional[float] = None
     stock_status: Optional[str] = None
