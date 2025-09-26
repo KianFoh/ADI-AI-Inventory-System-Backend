@@ -150,7 +150,15 @@ def create_item(request: Request, item: ItemCreate, db: Session = Depends(get_db
     try:
         created_item = item_crud.create_item(db, payload)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=e.args[0] if isinstance(e, ValueError) else str(e))
+        # normalize ValueError payloads into a list of error dicts (or single string)
+        err = e.args[0] if e.args else str(e)
+        if isinstance(err, list):
+            detail = err
+        elif isinstance(err, dict):
+            detail = [err]
+        else:
+            detail = {"message": str(err)}
+        raise HTTPException(status_code=400, detail=detail)
 
     base_url = get_base_url(request)
     return item_crud.create_item_response(db, created_item, base_url)
