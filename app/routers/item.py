@@ -174,10 +174,30 @@ def update_item(request: Request, item_id: str, item: ItemUpdate, db: Session = 
         db_item = item_crud.get_item(db, item_id)
         if not db_item:
             raise HTTPException(status_code=404, detail={"field": "item_id", "message": "Item not found"})
-        current_process = proc.strip().upper() if proc is not None else (db_item.process or "")
-        current_name_part = name_val.strip() if name_val is not None else db_item.name[len(current_process):] if db_item.name.startswith(current_process) else db_item.name
-        update_payload["name"] = f"{current_process}{current_name_part}"
-        update_payload["process"] = current_process
+
+        # Determine resulting process (uppercase, no spaces)
+        resulting_process = proc.strip().upper() if proc is not None else (db_item.process or "")
+
+        # Determine name part (use new name if provided, otherwise extract existing name part)
+        if name_val is not None:
+            name_part = name_val.strip()
+        else:
+            # existing stored name is expected to be "{PROCESS}-{name_part}"
+            existing_prefix = f"{db_item.process}-" if db_item.process else ""
+            if existing_prefix and db_item.name.startswith(existing_prefix):
+                name_part = db_item.name[len(existing_prefix):]
+            else:
+                # fallback to whole stored name if it doesn't match expected pattern
+                name_part = db_item.name
+
+        # Compose stored name same as create: "{PROCESS}-{name_part}" (omit leading hyphen if no process)
+        if resulting_process:
+            stored_name = f"{resulting_process}-{name_part}"
+        else:
+            stored_name = name_part
+
+        update_payload["name"] = stored_name
+        update_payload["process"] = resulting_process
 
     try:
         updated_item = item_crud.update_item(db, item_id, update_payload)

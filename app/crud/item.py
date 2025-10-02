@@ -340,6 +340,9 @@ def update_item(db: Session, item_id: str, item: Union[ItemUpdate, dict]) -> Opt
     if not db_item:
         return None
 
+    # remember original type so we can remove its stat row if the type changes
+    original_type = db_item.item_type
+
     update_data = _normalize_input_to_dict(item)
     # if incoming contains item_type string convert
     if "item_type" in update_data and isinstance(update_data["item_type"], str):
@@ -391,6 +394,15 @@ def update_item(db: Session, item_id: str, item: Union[ItemUpdate, dict]) -> Opt
     elif db_item.item_type == ItemType.CONTAINER:
         db_item.measure_method = MeasureMethod.WEIGHT
 
+    # If the item_type changed, remove the old stat row so state stays consistent.
+    if original_type != db_item.item_type:
+        if original_type == ItemType.PARTITION:
+            db.query(PartitionStat).filter(PartitionStat.item_id == db_item.id).delete(synchronize_session=False)
+        elif original_type == ItemType.LARGE_ITEM:
+            db.query(LargeItemStat).filter(LargeItemStat.item_id == db_item.id).delete(synchronize_session=False)
+        elif original_type == ItemType.CONTAINER:
+            db.query(ContainerStat).filter(ContainerStat.item_id == db_item.id).delete(synchronize_session=False)
+        # commit deletion together with the item changes below
     db.commit()
     db.refresh(db_item)
 
