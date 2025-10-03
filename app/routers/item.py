@@ -180,15 +180,19 @@ def update_item(request: Request, item_id: str, item: ItemUpdate, db: Session = 
 
         # Determine name part (use new name if provided, otherwise extract existing name part)
         if name_val is not None:
-            name_part = name_val.strip()
+            # Use the provided name, but strip any leading "<SOMETHING>-" prefix so we don't duplicate process
+            raw_name = name_val.strip()
+            if "-" in raw_name:
+                name_part = raw_name.split("-", 1)[1].strip()
+            else:
+                name_part = raw_name
         else:
             # existing stored name is expected to be "{PROCESS}-{name_part}"
-            existing_prefix = f"{db_item.process}-" if db_item.process else ""
-            if existing_prefix and db_item.name.startswith(existing_prefix):
-                name_part = db_item.name[len(existing_prefix):]
+            # Remove any existing leading "<SOMETHING>-" prefix so we replace it
+            if "-" in db_item.name:
+                name_part = db_item.name.split("-", 1)[1].strip()
             else:
-                # fallback to whole stored name if it doesn't match expected pattern
-                name_part = db_item.name
+                name_part = db_item.name.strip()
 
         # Compose stored name same as create: "{PROCESS}-{name_part}" (omit leading hyphen if no process)
         if resulting_process:
