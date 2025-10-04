@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from sqlalchemy import func, or_
+from sqlalchemy import func, or_, text
 from app.models.rfid_tag import RFIDTag
 from app.schemas.rfid_tag import RFIDTagCreate, RFIDTagUpdate, RFIDTagResponse
 from typing import List, Optional, Tuple
@@ -114,3 +114,28 @@ def get_assigned_tag_count(db: Session) -> int:
 def get_unassigned_tag_count(db: Session) -> int:
     """Get count of unassigned tags"""
     return db.query(RFIDTag).filter(RFIDTag.assigned == False).count()
+
+def get_unit_by_rfid_tag(db: Session, rfidtag: str):
+    """Return first matching record from large_items / partitions / containers for the given rfidtag as a plain dict, or None."""
+    table_checks = [
+        ("large_items", "rfid_tag_id"),
+        ("partitions", "rfid_tag_id"),
+        ("containers", "rfid_tag_id"),
+    ]
+
+    for table_name, col in table_checks:
+        sql = text(f"SELECT * FROM {table_name} WHERE {col} = :tag LIMIT 1")
+        try:
+            row = db.execute(sql, {"tag": rfidtag}).fetchone()
+        except Exception:
+            row = None
+
+        if row:
+            try:
+                return dict(row._mapping)
+            except Exception:
+                try:
+                    return {i: row[i] for i in range(len(row))}
+                except Exception:
+                    return {"raw": str(row)}
+    return None

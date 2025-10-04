@@ -153,3 +153,18 @@ def get_assigned_tag_count(db: Session = Depends(get_db)):
 def get_unassigned_tag_count(db: Session = Depends(get_db)):
     """Get unassigned tag count"""
     return rfid_crud.get_unassigned_tag_count(db)
+
+# Ceck whether a unit exists for a given RFID tag
+@router.get("/unit/{rfidtag}", response_model=dict)
+def get_unit_by_rfid_tag(rfidtag: str, db: Session = Depends(get_db)):
+    """Query large_items / partitions / containers for a record that matches the provided RFID tag.
+    Return the first matching row (as a plain dict) directly in the response. Raise 404 when none found.
+    """
+    record = rfid_crud.get_unit_by_rfid_tag(db, rfidtag)
+    if record:
+        return record
+
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail={"tag_id": rfidtag, "message": "No unit found in large_items / partitions / containers for this tag"}
+    )
