@@ -34,6 +34,7 @@ def get_items(
     search: Optional[str] = None,
     item_type: Optional[str] = None,
     manufacturer: Optional[str] = None,
+    stock_status: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
     # Convert string to enum
@@ -46,7 +47,7 @@ def get_items(
 
     items, total_count = item_crud.get_items(
         db, page=page, page_size=page_size, search=search,
-        item_type=item_type_enum, manufacturer=manufacturer
+        item_type=item_type_enum, manufacturer=manufacturer, stock_status=stock_status
     )
 
     base_url = get_base_url(request)

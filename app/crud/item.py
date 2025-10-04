@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from sqlalchemy import func, or_
+from sqlalchemy import func, or_, and_
 from app.models.item import Item, ItemType, MeasureMethod, PartitionStat, LargeItemStat, ContainerStat, StockStatus
 from app.models.partition import Partition
 from app.models.large_item import LargeItem
@@ -232,7 +232,8 @@ def get_items(
     page_size: int = 10,
     search: Optional[str] = None,
     item_type: Optional[ItemType] = None,
-    manufacturer: Optional[str] = None
+    manufacturer: Optional[str] = None,
+    stock_status: Optional[str] = None
 ) -> Tuple[List[Item], int]:
     query = db.query(Item)
     if search:
@@ -242,6 +243,36 @@ def get_items(
         query = query.filter(Item.item_type == item_type)
     if manufacturer:
         query = query.filter(Item.manufacturer.ilike(f"%{manufacturer}%"))
+
+    # Apply stock_status filter if provided. Matches items whose per-type stat row
+    # has the requested stock_status (partition / large_item / container).
+    if stock_status:
+        ss_enum = None
+        try:
+            ss_enum = StockStatus(stock_status)
+        except Exception:
+            # Try case-insensitive match then fail with clear message
+            try:
+                ss_enum = StockStatus(stock_status.upper())
+            except Exception:
+                raise ValueError({"field": "stock_status", "message": f"Invalid stock_status. Must be one of {[s.value for s in StockStatus]}"})
+
+        status_cond = or_(
+            and_(
+                Item.item_type == ItemType.PARTITION,
+                db.query(PartitionStat).filter(PartitionStat.item_id == Item.id, PartitionStat.stock_status == ss_enum).exists()
+            ),
+            and_(
+                Item.item_type == ItemType.LARGE_ITEM,
+                db.query(LargeItemStat).filter(LargeItemStat.item_id == Item.id, LargeItemStat.stock_status == ss_enum).exists()
+            ),
+            and_(
+                Item.item_type == ItemType.CONTAINER,
+                db.query(ContainerStat).filter(ContainerStat.item_id == Item.id, ContainerStat.stock_status == ss_enum).exists()
+            ),
+        )
+        query = query.filter(status_cond)
+
     query = query.order_by(Item.id)
     total_count = query.count()
     skip = (page - 1) * page_size
