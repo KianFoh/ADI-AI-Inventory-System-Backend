@@ -4,9 +4,7 @@ import math
 from app.models.storage_section import SectionColor
 from app.validators import (
     storage_format_validator, 
-    storage_format_optional_validator,
-    bounded_int_validator,
-    bounded_int_optional_validator
+    storage_format_optional_validator
 )
 
 class StorageSectionBase(BaseModel):

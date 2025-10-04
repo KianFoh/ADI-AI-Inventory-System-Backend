@@ -1,7 +1,11 @@
 from sqlalchemy.orm import Session
-from sqlalchemy import func, or_, text
-from app.models.rfid_tag import RFIDTag
+from sqlalchemy import func, or_, text, inspect
 from app.schemas.rfid_tag import RFIDTagCreate, RFIDTagUpdate, RFIDTagResponse
+from app.models.rfid_tag import RFIDTag
+from app.models.large_item import LargeItem
+from app.models.partition import Partition
+from app.models.container import Container
+from app.models.item import Item
 from typing import List, Optional, Tuple
 
 def get_rfid_tag(db: Session, tag_id: str) -> Optional[RFIDTagResponse]:
@@ -115,27 +119,43 @@ def get_unassigned_tag_count(db: Session) -> int:
     """Get count of unassigned tags"""
     return db.query(RFIDTag).filter(RFIDTag.assigned == False).count()
 
+def _model_to_dict(instance):
+    mapper = inspect(instance.__class__)
+    return {c.key: getattr(instance, c.key) for c in mapper.column_attrs}
+
 def get_unit_by_rfid_tag(db: Session, rfidtag: str):
-    """Return first matching record from large_items / partitions / containers for the given rfidtag as a plain dict, or None."""
-    table_checks = [
-        ("large_items", "rfid_tag_id"),
-        ("partitions", "rfid_tag_id"),
-        ("containers", "rfid_tag_id"),
-    ]
+    """Return first matching record from large_items / partitions / containers for the given rfidtag
+    as a plain dict including the linked item name (item_name), or None.
+    Uses SQLAlchemy ORM instead of raw SQL.
+    """
+    # import models here to avoid circular import at module import time
 
-    for table_name, col in table_checks:
-        sql = text(f"SELECT * FROM {table_name} WHERE {col} = :tag LIMIT 1")
-        try:
-            row = db.execute(sql, {"tag": rfidtag}).fetchone()
-        except Exception:
-            row = None
 
-        if row:
-            try:
-                return dict(row._mapping)
-            except Exception:
-                try:
-                    return {i: row[i] for i in range(len(row))}
-                except Exception:
-                    return {"raw": str(row)}
+    # check large items
+    unit = db.query(LargeItem).filter(LargeItem.rfid_tag_id == rfidtag).first()
+    if unit:
+        result = _model_to_dict(unit)
+        item = db.query(Item).filter(Item.id == getattr(unit, "item_id", None)).first()
+        result["item_name"] = item.name if item else None
+        result["unit_table"] = "large_items"
+        return result
+
+    # check partitions
+    unit = db.query(Partition).filter(Partition.rfid_tag_id == rfidtag).first()
+    if unit:
+        result = _model_to_dict(unit)
+        item = db.query(Item).filter(Item.id == getattr(unit, "item_id", None)).first()
+        result["item_name"] = item.name if item else None
+        result["unit_table"] = "partitions"
+        return result
+
+    # check containers
+    unit = db.query(Container).filter(Container.rfid_tag_id == rfidtag).first()
+    if unit:
+        result = _model_to_dict(unit)
+        item = db.query(Item).filter(Item.id == getattr(unit, "item_id", None)).first()
+        result["item_name"] = item.name if item else None
+        result["unit_table"] = "containers"
+        return result
+
     return None

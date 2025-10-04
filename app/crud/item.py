@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from sqlalchemy import func, or_
+from sqlalchemy import func, or_, and_
 from app.models.item import Item, ItemType, MeasureMethod, PartitionStat, LargeItemStat, ContainerStat, StockStatus
 from app.models.partition import Partition
 from app.models.large_item import LargeItem
@@ -232,7 +232,8 @@ def get_items(
     page_size: int = 10,
     search: Optional[str] = None,
     item_type: Optional[ItemType] = None,
-    manufacturer: Optional[str] = None
+    manufacturer: Optional[str] = None,
+    stock_status: Optional[str] = None
 ) -> Tuple[List[Item], int]:
     query = db.query(Item)
     if search:
@@ -242,6 +243,36 @@ def get_items(
         query = query.filter(Item.item_type == item_type)
     if manufacturer:
         query = query.filter(Item.manufacturer.ilike(f"%{manufacturer}%"))
+
+    # Apply stock_status filter if provided. Matches items whose per-type stat row
+    # has the requested stock_status (partition / large_item / container).
+    if stock_status:
+        ss_enum = None
+        try:
+            ss_enum = StockStatus(stock_status)
+        except Exception:
+            # Try case-insensitive match then fail with clear message
+            try:
+                ss_enum = StockStatus(stock_status.upper())
+            except Exception:
+                raise ValueError({"field": "stock_status", "message": f"Invalid stock_status. Must be one of {[s.value for s in StockStatus]}"})
+
+        status_cond = or_(
+            and_(
+                Item.item_type == ItemType.PARTITION,
+                db.query(PartitionStat).filter(PartitionStat.item_id == Item.id, PartitionStat.stock_status == ss_enum).exists()
+            ),
+            and_(
+                Item.item_type == ItemType.LARGE_ITEM,
+                db.query(LargeItemStat).filter(LargeItemStat.item_id == Item.id, LargeItemStat.stock_status == ss_enum).exists()
+            ),
+            and_(
+                Item.item_type == ItemType.CONTAINER,
+                db.query(ContainerStat).filter(ContainerStat.item_id == Item.id, ContainerStat.stock_status == ss_enum).exists()
+            ),
+        )
+        query = query.filter(status_cond)
+
     query = query.order_by(Item.id)
     total_count = query.count()
     skip = (page - 1) * page_size
@@ -340,6 +371,9 @@ def update_item(db: Session, item_id: str, item: Union[ItemUpdate, dict]) -> Opt
     if not db_item:
         return None
 
+    # remember original type so we can remove its stat row if the type changes
+    original_type = db_item.item_type
+
     update_data = _normalize_input_to_dict(item)
     # if incoming contains item_type string convert
     if "item_type" in update_data and isinstance(update_data["item_type"], str):
@@ -391,6 +425,15 @@ def update_item(db: Session, item_id: str, item: Union[ItemUpdate, dict]) -> Opt
     elif db_item.item_type == ItemType.CONTAINER:
         db_item.measure_method = MeasureMethod.WEIGHT
 
+    # If the item_type changed, remove the old stat row so state stays consistent.
+    if original_type != db_item.item_type:
+        if original_type == ItemType.PARTITION:
+            db.query(PartitionStat).filter(PartitionStat.item_id == db_item.id).delete(synchronize_session=False)
+        elif original_type == ItemType.LARGE_ITEM:
+            db.query(LargeItemStat).filter(LargeItemStat.item_id == db_item.id).delete(synchronize_session=False)
+        elif original_type == ItemType.CONTAINER:
+            db.query(ContainerStat).filter(ContainerStat.item_id == db_item.id).delete(synchronize_session=False)
+        # commit deletion together with the item changes below
     db.commit()
     db.refresh(db_item)
 

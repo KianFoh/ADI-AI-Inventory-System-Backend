@@ -3,8 +3,11 @@ from typing import Optional, List
 from math import ceil
 import re
 from app.models.item import ItemType, MeasureMethod
-from app.validators import non_empty_string_preserve_case_validator, string_length_validator
 
+
+# -----------------------------
+# Shared Stat Response Schemas
+# -----------------------------
 class PartitionStatResponse(BaseModel):
     total_quantity: Optional[int] = None
     total_capacity: Optional[int] = None
@@ -15,6 +18,7 @@ class PartitionStatResponse(BaseModel):
 
     model_config = {"extra": "ignore", "exclude_none": True}
 
+
 class LargeItemStatResponse(BaseModel):
     total_quantity: Optional[int] = None
     high_threshold: Optional[int] = None
@@ -22,6 +26,7 @@ class LargeItemStatResponse(BaseModel):
     stock_status: Optional[str] = None
 
     model_config = {"extra": "ignore", "exclude_none": True}
+
 
 class ContainerStatResponse(BaseModel):
     container_item_weight: Optional[float] = None
@@ -34,255 +39,253 @@ class ContainerStatResponse(BaseModel):
 
     model_config = {"extra": "ignore", "exclude_none": True}
 
+
+# -----------------------------
+# Item Base
+# -----------------------------
 class ItemBase(BaseModel):
     id: str
     name: str
-    manufacturer: str
+    manufacturer: Optional[str] = None
     item_type: ItemType
     measure_method: Optional[MeasureMethod] = None
     image_url: Optional[str] = None
 
-    # New shared metadata fields (present on DB & responses)
+    # Metadata
     process: Optional[str] = None
     tooling_used: Optional[str] = None
     vendor_pn: Optional[str] = None
     sap_pn: Optional[str] = None
     package_used: Optional[str] = None
 
+
+# -----------------------------
+# Item Create
+# -----------------------------
 class ItemCreate(BaseModel):
     id: Optional[str] = None
     name: str
     manufacturer: Optional[str] = None
     item_type: str
-    measure_method: Optional[str] = None
-    image: Optional[str] = None
+    measure_method: Optional[MeasureMethod] = None
+    image: str
 
-    # inputs forwarded to per-type stat rows
+    # Partition thresholds
     partition_capacity: Optional[int] = None
-
-    # thresholds for partition (percent 0-100) - required for partition items
     partition_high: Optional[float] = None
     partition_low: Optional[float] = None
 
-    # thresholds for large item (integers) - required for large_item
+    # Large thresholds
     large_high: Optional[int] = None
     large_low: Optional[int] = None
 
-    # thresholds for container (floats) - required for container items
+    # Container thresholds
     container_high: Optional[float] = None
     container_low: Optional[float] = None
     container_item_weight: Optional[float] = None
     container_weight: Optional[float] = None
-    # NOTE: clients MUST NOT provide total_weight/total_quantity — backend controls totals
 
-    # New request fields
-    process: Optional[str] = None
+    # Metadata
+    process: str
     tooling_used: Optional[str] = None
     vendor_pn: Optional[str] = None
     sap_pn: Optional[str] = None
     package_used: Optional[str] = None
 
-    model_config = {
-        "extra": "ignore",
-        "str_strip_whitespace": True,
-        "str_to_lower": False,
-        "exclude_none": True
-    }
+    model_config = {"extra": "ignore", "str_strip_whitespace": True, "exclude_none": True}
 
+    # ------------------- Validators -------------------
     @field_validator("process")
-    @classmethod
     def validate_process(cls, v):
-        if v is None:
-            return v
         v = v.strip().upper()
         if not re.fullmatch(r"[A-Z0-9]+", v):
             raise ValueError("process must contain only uppercase letters and digits, no spaces")
         return v
 
-    # validate partition thresholds (percent)
     @field_validator("partition_high", "partition_low")
-    @classmethod
-    def _validate_partition_thresholds(cls, v):
-        if v is None:
-            return v
-        if not (0 <= v <= 100):
+    def validate_partition_thresholds(cls, v):
+        if v is not None and not (0 <= v <= 100):
             raise ValueError("partition thresholds must be between 0 and 100")
         return v
 
-    # validate container thresholds (non-negative)
     @field_validator("container_high", "container_low")
-    @classmethod
-    def _validate_container_thresholds(cls, v):
-        if v is None:
-            return v
-        if v < 0:
+    def validate_container_thresholds(cls, v):
+        if v is not None and v < 0:
             raise ValueError("container thresholds must be non-negative")
         return v
 
-    # validate large thresholds (integers, non-negative)
     @field_validator("large_high", "large_low")
-    @classmethod
-    def _validate_large_thresholds(cls, v):
-        if v is None:
-            return v
-        if v < 0:
-            raise ValueError("large thresholds must be non-negative integers")
+    def validate_large_thresholds(cls, v):
+        if v is not None and v < 0:
+            raise ValueError("large thresholds must be non-negative")
         return v
 
     @model_validator(mode="after")
-    def _validate_threshold_order(self):
-        # partition thresholds
-        if self.partition_high is not None and self.partition_low is not None:
-            if not (self.partition_high > self.partition_low):
-                raise ValueError("partition_high must be greater than partition_low")
-        # large item thresholds
-        if self.large_high is not None and self.large_low is not None:
-            if not (self.large_high > self.large_low):
-                raise ValueError("large_high must be greater than large_low")
-        # container thresholds
-        if self.container_high is not None and self.container_low is not None:
-            if not (self.container_high > self.container_low):
-                raise ValueError("container_high must be greater than container_low")
+    def validate_threshold_order(self):
+        def check(high, low, label):
+            if high is not None and low is not None and high <= low:
+                raise ValueError(f"{label}_high must be greater than {label}_low")
+
+        check(self.partition_high, self.partition_low, "partition")
+        check(self.large_high, self.large_low, "large")
+        check(self.container_high, self.container_low, "container")
         return self
 
     @model_validator(mode="after")
-    def _validate_required_thresholds(self):
+    def validate_required_thresholds(self):
         t = (self.item_type or "").strip()
         if not t:
             raise ValueError("item_type is required")
-        if t == "partition":
-            if self.partition_high is None or self.partition_low is None:
-                raise ValueError("partition_high and partition_low are required for partition items")
-        elif t == "large_item":
-            if self.large_high is None or self.large_low is None:
-                raise ValueError("large_high and large_low are required for large_item items")
-        elif t == "container":
-            if self.container_high is None or self.container_low is None:
-                raise ValueError("container_high and container_low are required for container items")
+
+        required = {
+            "partition": ("partition_high", "partition_low"),
+            "large_item": ("large_high", "large_low"),
+            "container": ("container_high", "container_low"),
+        }
+
+        if t in required:
+            fields = required[t]
+            if any(getattr(self, f) is None for f in fields):
+                raise ValueError(f"{fields[0]} and {fields[1]} are required for {t} items")
         return self
 
+    # Ensure measure_method matches item_type
+    @model_validator(mode="after")
+    def set_measure_method_from_type(self):
+        t = (self.item_type or "").strip()
+        if t == "partition":
+            self.measure_method = MeasureMethod.VISION
+        elif t == "container":
+            self.measure_method = MeasureMethod.WEIGHT
+        elif t == "large_item":
+            self.measure_method = None
+        return self
+
+
+# -----------------------------
+# Item Update
+# -----------------------------
 class ItemUpdate(BaseModel):
     name: Optional[str] = None
     manufacturer: Optional[str] = None
     item_type: Optional[str] = None
-    measure_method: Optional[str] = None
+    measure_method: Optional[MeasureMethod] = None
     image: Optional[str] = None
 
-    # optional stat inputs clients can change
+    # Partition thresholds
     partition_capacity: Optional[int] = None
-    # optional stat inputs - if client supplies a high or low, require the pair
     partition_high: Optional[float] = None
     partition_low: Optional[float] = None
-    # NOTE: partition total_capacity/total_quantity are not accepted from client
 
+    # Large thresholds
     large_high: Optional[int] = None
     large_low: Optional[int] = None
 
+    # Container thresholds
     container_item_weight: Optional[float] = None
     container_weight: Optional[float] = None
     container_high: Optional[float] = None
     container_low: Optional[float] = None
-    # NOTE: container total_weight/total_quantity are not accepted from client
 
+    # Metadata
     process: Optional[str] = None
     tooling_used: Optional[str] = None
     vendor_pn: Optional[str] = None
     sap_pn: Optional[str] = None
     package_used: Optional[str] = None
 
-    model_config = {
-        "extra": "ignore",
-        "str_strip_whitespace": True,
-        "str_to_lower": False,
-        "exclude_none": True
-    }
+    model_config = {"extra": "ignore", "str_strip_whitespace": True, "exclude_none": True}
 
+    # ------------------- Validators -------------------
     @field_validator("process")
-    @classmethod
     def validate_process_optional(cls, v):
-        if v is None:
-            return v
-        v = v.strip().upper()
-        if not re.fullmatch(r"[A-Z0-9]+", v):
-            raise ValueError("process must contain only uppercase letters and digits, no spaces")
+        if v is not None:
+            v = v.strip().upper()
+            if not re.fullmatch(r"[A-Z0-9]+", v):
+                raise ValueError("process must contain only uppercase letters and digits, no spaces")
         return v
 
-    # reuse same validators for thresholds
     @field_validator("partition_high", "partition_low", "container_high", "container_low")
-    @classmethod
-    def _validate_thresholds_optional(cls, v):
-        if v is None:
-            return v
+    def validate_thresholds_optional(cls, v):
         if isinstance(v, float) and v < 0:
             raise ValueError("threshold values must be non-negative")
         return v
 
     @field_validator("large_high", "large_low")
-    @classmethod
-    def _validate_large_thresholds_optional(cls, v):
-        if v is None:
-            return v
-        if v < 0:
-            raise ValueError("large thresholds must be non-negative integers")
+    def validate_large_thresholds_optional(cls, v):
+        if v is not None and v < 0:
+            raise ValueError("large thresholds must be non-negative")
         return v
 
     @model_validator(mode="after")
-    def _validate_threshold_order_optional(self):
-        # only validate when both values are provided
-        if self.partition_high is not None and self.partition_low is not None:
-            if not (self.partition_high > self.partition_low):
-                raise ValueError("partition_high must be greater than partition_low")
-        if self.large_high is not None and self.large_low is not None:
-            if not (self.large_high > self.large_low):
-                raise ValueError("large_high must be greater than large_low")
-        if self.container_high is not None and self.container_low is not None:
-            if not (self.container_high > self.container_low):
-                raise ValueError("container_high must be greater than container_low")
+    def validate_threshold_order_optional(self):
+        def check(high, low, label):
+            if high is not None and low is not None and high <= low:
+                raise ValueError(f"{label}_high must be greater than {label}_low")
+
+        check(self.partition_high, self.partition_low, "partition")
+        check(self.large_high, self.large_low, "large")
+        check(self.container_high, self.container_low, "container")
         return self
 
     @model_validator(mode="after")
-    def _validate_threshold_pairs_optional(self):
-        # if client provides one side of a pair, require the other side too
-        if (self.partition_high is None) ^ (self.partition_low is None):
-            raise ValueError("both partition_high and partition_low must be provided together")
-        if (self.large_high is None) ^ (self.large_low is None):
-            raise ValueError("both large_high and large_low must be provided together")
-        if (self.container_high is None) ^ (self.container_low is None):
-            raise ValueError("both container_high and container_low must be provided together")
+    def validate_threshold_pairs_optional(self):
+        def require_both(a, b, label):
+            if (a is None) ^ (b is None):
+                raise ValueError(f"both {label}_high and {label}_low must be provided together")
+
+        require_both(self.partition_high, self.partition_low, "partition")
+        require_both(self.large_high, self.large_low, "large")
+        require_both(self.container_high, self.container_low, "container")
         return self
 
+    # If item_type is updated, enforce corresponding measure_method
+    @model_validator(mode="after")
+    def set_measure_method_from_type_optional(self):
+        if not self.item_type:
+            return self
+        t = self.item_type.strip()
+        if t == "partition":
+            self.measure_method = MeasureMethod.VISION
+        elif t == "container":
+            self.measure_method = MeasureMethod.WEIGHT
+        elif t == "large_item":
+            self.measure_method = None
+        return self
+
+
+# -----------------------------
+# Item Response
+# -----------------------------
 class ItemResponse(ItemBase):
-    # per-type stat nested responses
     partition_stat: Optional[PartitionStatResponse] = None
     largeitem_stat: Optional[LargeItemStatResponse] = None
     container_stat: Optional[ContainerStatResponse] = None
 
-    # Pydantic v2 style config
     model_config = {"from_attributes": True}
 
-    @model_validator(mode='after')
+    @model_validator(mode="after")
     def fix_weights_for_non_container(self):
         if self.item_type != ItemType.CONTAINER:
-            # ensure response doesn't include container weights for non-container types
-            self.container_stat = None if getattr(self, "container_stat", None) is None else self.container_stat
+            self.container_stat = None
         return self
+
 
 class ItemStatsResponse(ItemResponse):
     total_quantity: Optional[int] = None
     total_capacity: Optional[int] = None
     total_weight: Optional[float] = None
-    # counts for how many instances of each type are registered under the item
     partition_count: Optional[int] = None
     container_count: Optional[int] = None
 
-    # Pydantic v2 config: ignore extra keys and exclude None fields from output
-    model_config = {
-        "extra": "ignore",
-        "exclude_none": True
-    }
+    model_config = {"extra": "ignore", "exclude_none": True}
 
+
+# -----------------------------
+# Paginated Items
+# -----------------------------
 class PaginatedItemsResponse(BaseModel):
-    items: List[ItemStatsResponse]   # ensure items use ItemStatsResponse so extra fields are preserved
+    items: List[ItemStatsResponse]
     total_items: int
     page: int
     page_size: int
@@ -300,5 +303,5 @@ class PaginatedItemsResponse(BaseModel):
             page_size=page_size,
             total_pages=total_pages,
             has_next=page < total_pages,
-            has_previous=page > 1
+            has_previous=page > 1,
         )

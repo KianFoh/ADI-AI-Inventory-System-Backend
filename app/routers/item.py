@@ -34,6 +34,7 @@ def get_items(
     search: Optional[str] = None,
     item_type: Optional[str] = None,
     manufacturer: Optional[str] = None,
+    stock_status: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
     # Convert string to enum
@@ -46,7 +47,7 @@ def get_items(
 
     items, total_count = item_crud.get_items(
         db, page=page, page_size=page_size, search=search,
-        item_type=item_type_enum, manufacturer=manufacturer
+        item_type=item_type_enum, manufacturer=manufacturer, stock_status=stock_status
     )
 
     base_url = get_base_url(request)
@@ -150,7 +151,15 @@ def create_item(request: Request, item: ItemCreate, db: Session = Depends(get_db
     try:
         created_item = item_crud.create_item(db, payload)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=e.args[0] if isinstance(e, ValueError) else str(e))
+        # normalize ValueError payloads into a list of error dicts (or single string)
+        err = e.args[0] if e.args else str(e)
+        if isinstance(err, list):
+            detail = err
+        elif isinstance(err, dict):
+            detail = [err]
+        else:
+            detail = {"message": str(err)}
+        raise HTTPException(status_code=400, detail=detail)
 
     base_url = get_base_url(request)
     return item_crud.create_item_response(db, created_item, base_url)
@@ -166,10 +175,34 @@ def update_item(request: Request, item_id: str, item: ItemUpdate, db: Session = 
         db_item = item_crud.get_item(db, item_id)
         if not db_item:
             raise HTTPException(status_code=404, detail={"field": "item_id", "message": "Item not found"})
-        current_process = proc.strip().upper() if proc is not None else (db_item.process or "")
-        current_name_part = name_val.strip() if name_val is not None else db_item.name[len(current_process):] if db_item.name.startswith(current_process) else db_item.name
-        update_payload["name"] = f"{current_process}{current_name_part}"
-        update_payload["process"] = current_process
+
+        # Determine resulting process (uppercase, no spaces)
+        resulting_process = proc.strip().upper() if proc is not None else (db_item.process or "")
+
+        # Determine name part (use new name if provided, otherwise extract existing name part)
+        if name_val is not None:
+            # Use the provided name, but strip any leading "<SOMETHING>-" prefix so we don't duplicate process
+            raw_name = name_val.strip()
+            if "-" in raw_name:
+                name_part = raw_name.split("-", 1)[1].strip()
+            else:
+                name_part = raw_name
+        else:
+            # existing stored name is expected to be "{PROCESS}-{name_part}"
+            # Remove any existing leading "<SOMETHING>-" prefix so we replace it
+            if "-" in db_item.name:
+                name_part = db_item.name.split("-", 1)[1].strip()
+            else:
+                name_part = db_item.name.strip()
+
+        # Compose stored name same as create: "{PROCESS}-{name_part}" (omit leading hyphen if no process)
+        if resulting_process:
+            stored_name = f"{resulting_process}-{name_part}"
+        else:
+            stored_name = name_part
+
+        update_payload["name"] = stored_name
+        update_payload["process"] = resulting_process
 
     try:
         updated_item = item_crud.update_item(db, item_id, update_payload)
