@@ -138,6 +138,7 @@ def get_transaction_stats(db: Session, filters: Optional[TransactionFilter] = No
     withdrawals = query.filter(Transaction.transaction_type == TransactionType.WITHDRAW).count()
     returns = query.filter(Transaction.transaction_type == TransactionType.RETURN).count()
     consumed = query.filter(Transaction.transaction_type == TransactionType.CONSUMED).count()
+    registrations = query.filter(Transaction.transaction_type == TransactionType.REGISTER).count()
     
     unique_items = query.with_entities(Transaction.item_id).distinct().count()
     unique_users = query.filter(Transaction.user_name.isnot(None)).with_entities(Transaction.user_name).distinct().count()
@@ -174,6 +175,7 @@ def get_transaction_stats(db: Session, filters: Optional[TransactionFilter] = No
         "withdrawals": withdrawals,
         "returns": returns,
         "consumed": consumed,
+        "registrations": registrations,
         "unique_items": unique_items,
         "unique_users": unique_users,
         "total_quantity_changes": total_quantity_changes,

@@ -134,6 +134,7 @@ class TransactionStats(BaseModel):
     withdrawals: int
     returns: int
     consumed: int
+    registrations: int
     unique_items: int
     unique_users: int
     total_quantity_changes: int

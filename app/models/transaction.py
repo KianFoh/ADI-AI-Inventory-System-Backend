@@ -7,6 +7,7 @@ class TransactionType(enum.Enum):
     WITHDRAW = "withdraw"
     RETURN = "return"
     CONSUMED = "consumed"
+    REGISTER = "register"
 
 class ItemType(enum.Enum):
     PARTITION = "partition"
