@@ -70,7 +70,7 @@ def get_rfid_tag(tag_id: str, db: Session = Depends(get_db)):
     if not tag:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"field": "tag_id", "message": "RFID tag not found"}
+            detail={"field": "tag_id", "message": f"{tag_id} tag not found"}
         )
     return tag
 
@@ -158,13 +158,22 @@ def get_unassigned_tag_count(db: Session = Depends(get_db)):
 @router.get("/unit/{rfidtag}", response_model=dict)
 def get_unit_by_rfid_tag(rfidtag: str, db: Session = Depends(get_db)):
     """Query large_items / partitions / containers for a record that matches the provided RFID tag.
-    Return the first matching row (as a plain dict) directly in the response. Raise 404 when none found.
+    First ensure the tag is registered in the system; if registered, return the first matching unit row.
     """
+    # Verify tag is registered
+    tag_record = rfid_crud.get_rfid_tag(db, tag_id=rfidtag)
+    if not tag_record:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"message": f"{rfidtag} RFID tag not registered in the system"}
+        )
+
+    # Tag exists — find assigned unit (if any)
     record = rfid_crud.get_unit_by_rfid_tag(db, rfidtag)
     if record:
         return record
 
     raise HTTPException(
         status_code=status.HTTP_404_NOT_FOUND,
-        detail={"tag_id": rfidtag, "message": "No unit found in large_items / partitions / containers for this tag"}
+        detail={"message": f"{rfidtag} RFID tag is not assigned to any item unit"}
     )

@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Depends, Request
 from fastapi.responses import JSONResponse
 from fastapi.exception_handlers import RequestValidationError
-from app.routers import users, transaction, storage_section, rfid_tags, partition, large_item, item, container
+from app.routers import users, transaction, storage_section, rfid_tags, partition, large_item, item, container, ai_vision
 from app.security import verify_api_key
 
 # Create FastAPI app
@@ -61,7 +61,9 @@ app.include_router(partition.router, dependencies=[Depends(verify_api_key)])
 app.include_router(container.router, dependencies=[Depends(verify_api_key)])
 app.include_router(large_item.router, dependencies=[Depends(verify_api_key)])
 app.include_router(item.router, dependencies=[Depends(verify_api_key)])
+app.include_router(ai_vision.router, dependencies=[Depends(verify_api_key)])
+
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000) 
+    uvicorn.run(app, host="0.0.0.0", port=8000)
