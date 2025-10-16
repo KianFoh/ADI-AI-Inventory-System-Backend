@@ -147,6 +147,7 @@ def get_unit_by_rfid_tag(db: Session, rfidtag: str):
         item = db.query(Item).filter(Item.id == getattr(unit, "item_id", None)).first()
         result["item_name"] = item.name if item else None
         result["unit_type"] = "partition"
+        result["partition_capacity"] = item.partition_stat.partition_capacity
         return result
 
     # check containers
@@ -156,6 +157,9 @@ def get_unit_by_rfid_tag(db: Session, rfidtag: str):
         item = db.query(Item).filter(Item.id == getattr(unit, "item_id", None)).first()
         result["item_name"] = item.name if item else None
         result["unit_type"] = "container"
+        result["container_weight"] = item.container_stat.container_weight
+        item_weight = item.container_stat.container_item_weight
+        result["container_item_weight"] = item_weight
         return result
 
     return None
