@@ -473,16 +473,22 @@ def update_item(db: Session, item_id: str, item: Union[ItemUpdate, dict]) -> Opt
         if not cs:
             cs = ContainerStat(item_id=db_item.id, total_weight=0.0)
             db.add(cs)
-        if container_item_weight_val is not None:
+
+        if "container_item_weight_val" in locals():
             cs.container_item_weight = container_item_weight_val
+
         if container_weight_val is not None:
             cs.container_weight = container_weight_val
+
         if container_high is not None:
             cs.high_threshold = container_high
+
         if container_low is not None:
             cs.low_threshold = container_low
+
         if container_stock_status is not None:
             cs.stock_status = StockStatus(container_stock_status)
+
         db.commit()
         db.refresh(cs)
 
