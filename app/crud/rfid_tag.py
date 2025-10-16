@@ -158,8 +158,6 @@ def get_unit_by_rfid_tag(db: Session, rfidtag: str):
         result["item_name"] = item.name if item else None
         result["unit_type"] = "container"
         result["container_weight"] = item.container_stat.container_weight
-        item_weight = item.container_stat.container_item_weight
-        result["container_item_weight"] = item_weight
         return result
 
     return None
