@@ -1,3 +1,4 @@
+import math
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_, and_
 from app.models.item import Item, ItemType, MeasureMethod, PartitionStat, LargeItemStat, ContainerStat, StockStatus
@@ -76,7 +77,7 @@ def _update_container_status(db: Session, item_id: str) -> None:
     computed_total_quantity = None
     if cs.container_item_weight is not None and cs.container_item_weight > 0:
         try:
-            computed_total_quantity = int(total_weight / float(cs.container_item_weight))
+            computed_total_quantity = int(round(total_weight / float(cs.container_item_weight)))
         except Exception:
             computed_total_quantity = 0
     new_status = _determine_stock_status(total_weight, cs.low_threshold, cs.high_threshold)
@@ -116,12 +117,6 @@ def _to_dict_safe(pydantic_obj):
             return pydantic_obj
 
 def create_item_response(db: Session, item: Item, base_url: str = "") -> ItemResponse:
-    if item.item_type == ItemType.PARTITION:
-        _update_partition_status(db, item.id)
-    elif item.item_type == ItemType.LARGE_ITEM:
-        _update_largeitem_status(db, item.id)
-    elif item.item_type == ItemType.CONTAINER:
-        _update_container_status(db, item.id)
 
     try:
         db.refresh(item)
@@ -312,7 +307,6 @@ def _create_initial_stat_for_item(db: Session, db_item: Item, data: dict) -> Non
                                stock_status=None)
             db.add(cs)
             db.flush()
-            _update_container_status(db, db_item.id)
 
 def create_item(db: Session, item: Union[ItemCreate, dict]) -> Item:
     data = _normalize_input_to_dict(item)

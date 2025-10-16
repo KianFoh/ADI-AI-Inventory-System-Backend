@@ -56,7 +56,8 @@ def calculate_quantity(db: Session, item_id: str, items_weight: float) -> Option
     cs = db.query(ContainerStat).filter(ContainerStat.item_id == item_id).first()
     if cs and cs.container_item_weight:
         try:
-            return int(math.ceil(items_weight / float(cs.container_item_weight)))
+            return int(round(items_weight / float(cs.container_item_weight)))
+
         except Exception:
             return None
     # fallback to Item only if stat not configured
