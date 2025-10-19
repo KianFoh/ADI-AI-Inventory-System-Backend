@@ -1,7 +1,16 @@
 import math
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_, and_, text
-from app.models.item import Item, ItemType, MeasureMethod, PartitionStat, LargeItemStat, ContainerStat, StockStatus
+from app.models.item import (
+    Item,
+    ItemType,
+    MeasureMethod,
+    PartitionStat,
+    LargeItemStat,
+    ContainerStat,
+    StockStatus,
+    ItemStatHistory,
+)
 from app.models.partition import Partition
 from app.models.large_item import LargeItem
 from app.models.container import Container
@@ -34,22 +43,86 @@ def _determine_stock_status(value: float, low_threshold, high_threshold) -> Opti
         return StockStatus.LOW
     return StockStatus.MEDIUM
 
-def _persist_if_changed(db: Session, obj, changes: Dict) -> None:
+def _persist_if_changed(db: Session, obj, changes: Dict, change_source: Optional[str] = None) -> None:
     changed = False
+    changed_keys = []
     for k, v in changes.items():
         if getattr(obj, k) != v:
             setattr(obj, k, v)
             changed = True
+            changed_keys.append(k)
     if changed:
         db.add(obj)
+        # record history for stat rows if relevant fields changed
+        try:
+            _maybe_record_stat_history(db, obj, changed_keys, change_source)
+        except Exception:
+            # history recording must not block main update; swallow and continue
+            db.rollback()
+            # re-add obj after rollback so commit below can proceed
+            db.add(obj)
         db.commit()
         db.refresh(obj)
+
+
+def _maybe_record_stat_history(db: Session, stat_obj, changed_keys: list, change_source: Optional[str] = None) -> None:
+    """
+    Create ItemStatHistory snapshot when monitored stat fields changed.
+    Only records for PartitionStat, LargeItemStat, ContainerStat and only when
+    relevant fields changed.
+    """
+    # Determine monitored fields per stat type
+    monitored = None
+    payload = {}
+    if isinstance(stat_obj, PartitionStat):
+        monitored = {"total_quantity", "total_capacity", "stock_status"}
+        if not monitored.intersection(changed_keys):
+            return
+        payload["total_quantity"] = getattr(stat_obj, "total_quantity", None)
+        payload["total_capacity"] = getattr(stat_obj, "total_capacity", None)
+        payload["total_weight"] = None
+        payload["stock_status"] = getattr(stat_obj, "stock_status", None)
+    elif isinstance(stat_obj, LargeItemStat):
+        monitored = {"total_quantity", "stock_status"}
+        if not monitored.intersection(changed_keys):
+            return
+        payload["total_quantity"] = getattr(stat_obj, "total_quantity", None)
+        payload["total_capacity"] = None
+        payload["total_weight"] = None
+        payload["stock_status"] = getattr(stat_obj, "stock_status", None)
+    elif isinstance(stat_obj, ContainerStat):
+        monitored = {"total_weight", "total_quantity", "stock_status"}
+        if not monitored.intersection(changed_keys):
+            return
+        payload["total_quantity"] = getattr(stat_obj, "total_quantity", None)
+        payload["total_capacity"] = None
+        payload["total_weight"] = getattr(stat_obj, "total_weight", None)
+        payload["stock_status"] = getattr(stat_obj, "stock_status", None)
+    else:
+        return
+
+    # Resolve item info
+    item_row = db.query(Item).filter(Item.id == getattr(stat_obj, "item_id")).first()
+    if not item_row:
+        return
+
+    hist = ItemStatHistory(
+        item_id=item_row.id,
+        item_name=item_row.name,
+        item_type=item_row.item_type,
+        total_quantity=payload.get("total_quantity"),
+        total_capacity=payload.get("total_capacity"),
+        total_weight=payload.get("total_weight"),
+        stock_status=payload.get("stock_status"),
+        change_source=change_source,
+    )
+    db.add(hist)
 
 def _stat_status_value(stat_row):
     return stat_row.stock_status.value if getattr(stat_row, "stock_status", None) else None
 
 # -- status updaters --
-def _update_partition_status(db: Session, item_id: str) -> None:
+def _update_partition_status(db: Session, item_id: str, change_source: Optional[str] = None) -> None:
     ps = db.query(PartitionStat).filter(PartitionStat.item_id == item_id).first()
     if not ps:
         return
@@ -59,17 +132,17 @@ def _update_partition_status(db: Session, item_id: str) -> None:
     total_capacity = int(partition_count) * per_capacity
     percent = (total_quantity / total_capacity) * 100.0 if total_capacity > 0 else 0.0
     new_status = _determine_stock_status(percent, ps.low_threshold, ps.high_threshold)
-    _persist_if_changed(db, ps, {"total_quantity": int(total_quantity), "total_capacity": int(total_capacity), "stock_status": new_status})
+    _persist_if_changed(db, ps, {"total_quantity": int(total_quantity), "total_capacity": int(total_capacity), "stock_status": new_status}, change_source=change_source)
 
-def _update_largeitem_status(db: Session, item_id: str) -> None:
+def _update_largeitem_status(db: Session, item_id: str, change_source: Optional[str] = None) -> None:
     ls = db.query(LargeItemStat).filter(LargeItemStat.item_id == item_id).first()
     if not ls:
         return
     total_qty = db.query(func.count(LargeItem.id)).filter(LargeItem.item_id == item_id).scalar() or 0
     new_status = _determine_stock_status(total_qty, ls.low_threshold, ls.high_threshold)
-    _persist_if_changed(db, ls, {"total_quantity": int(total_qty), "stock_status": new_status})
+    _persist_if_changed(db, ls, {"total_quantity": int(total_qty), "stock_status": new_status}, change_source=change_source)
 
-def _update_container_status(db: Session, item_id: str) -> None:
+def _update_container_status(db: Session, item_id: str, change_source: Optional[str] = None) -> None:
     cs = db.query(ContainerStat).filter(ContainerStat.item_id == item_id).first()
     if not cs:
         return
@@ -83,7 +156,7 @@ def _update_container_status(db: Session, item_id: str) -> None:
     new_status = _determine_stock_status(total_weight, cs.low_threshold, cs.high_threshold)
     changes = {"total_weight": float(total_weight), "stock_status": new_status}
     changes["total_quantity"] = computed_total_quantity if cs.container_item_weight is not None else None
-    _persist_if_changed(db, cs, changes)
+    _persist_if_changed(db, cs, changes, change_source=change_source)
 
 # -- stats readers --
 def get_partition_stats(db: Session, item_id: str) -> Dict[str, int]:
@@ -284,7 +357,6 @@ def _create_initial_stat_for_item(db: Session, db_item: Item, data: dict) -> Non
                                stock_status=StockStatus.LOW)
             db.add(ps)
             db.flush()
-            _update_partition_status(db, db_item.id)
     elif db_item.item_type == ItemType.LARGE_ITEM:
         if not db.query(LargeItemStat).filter(LargeItemStat.item_id == db_item.id).first():
             ls = LargeItemStat(item_id=db_item.id, total_quantity=0,
@@ -293,7 +365,6 @@ def _create_initial_stat_for_item(db: Session, db_item: Item, data: dict) -> Non
                                stock_status=StockStatus.LOW)
             db.add(ls)
             db.flush()
-            _update_largeitem_status(db, db_item.id)
     elif db_item.item_type == ItemType.CONTAINER:
         if not db.query(ContainerStat).filter(ContainerStat.item_id == db_item.id).first():
             init_total_qty = 0 if data.get("container_item_weight") is not None else None
@@ -488,11 +559,11 @@ def update_item(db: Session, item_id: str, item: Union[ItemUpdate, dict]) -> Opt
 
     # recompute statuses
     if db_item.item_type == ItemType.PARTITION:
-        _update_partition_status(db, db_item.id)
+        _update_partition_status(db, db_item.id, "Item Threshold Change")    
     if db_item.item_type == ItemType.LARGE_ITEM:
-        _update_largeitem_status(db, db_item.id)
+        _update_largeitem_status(db, db_item.id, "Item Threshold Change")
     if db_item.item_type == ItemType.CONTAINER:
-        _update_container_status(db, db_item.id)
+        _update_container_status(db, db_item.id, "Item Threshold Change")
 
     return db_item
 

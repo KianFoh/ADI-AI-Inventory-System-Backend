@@ -72,7 +72,7 @@ def create_large_item(db: Session, large_item: LargeItemCreate) -> LargeItem:
     try:
         db.refresh(created)
         # recompute and persist totals + stock_status
-        _update_largeitem_status(db, created.item_id)
+        _update_largeitem_status(db, created.item_id, "Register Large Item")
         # refresh parent Item and LargeItemStat so responses reflect new totals
         item = db.query(Item).filter(Item.id == created.item_id).first()
         if item:
@@ -98,7 +98,7 @@ def update_large_item(db: Session, large_item_id: str, large_item: LargeItemUpda
     if updated:
         try:
             db.refresh(updated)
-            _update_largeitem_status(db, updated.item_id)
+            _update_largeitem_status(db, updated.item_id, "Return Large Item")
             item = db.query(Item).filter(Item.id == updated.item_id).first()
             if item:
                 db.refresh(item)
@@ -112,7 +112,7 @@ def delete_large_item(db: Session, large_item_id: str) -> Optional[LargeItem]:
     deleted = delete_entity_with_rfid_and_storage(db, LargeItem, large_item_id)
     if deleted and item_id:
         try:
-            _update_largeitem_status(db, item_id)
+            _update_largeitem_status(db, item_id, "Large Item Consumed")
             item = db.query(Item).filter(Item.id == item_id).first()
             if item:
                 db.refresh(item)

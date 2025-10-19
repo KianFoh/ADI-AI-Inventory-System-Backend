@@ -44,6 +44,14 @@ class Item(Base):
     partition_stat = relationship("PartitionStat", uselist=False, back_populates="item", cascade="all, delete-orphan")
     largeitem_stat = relationship("LargeItemStat", uselist=False, back_populates="item", cascade="all, delete-orphan")
     container_stat = relationship("ContainerStat", uselist=False, back_populates="item", cascade="all, delete-orphan")
+
+    # historical snapshots (ItemStatHistory) should be removed when the Item is deleted
+    item_stat_history = relationship(
+        "ItemStatHistory",
+        back_populates="item",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
  
 # Per-type stat tables
 class PartitionStat(Base):
@@ -104,7 +112,8 @@ class ItemStatHistory(Base):
 
     # Snapshot metadata
     timestamp = Column(DateTime, default=func.now(), nullable=False)
-    item_id = Column(String(255), nullable=False, index=True)
+    # reference items.id with ON DELETE CASCADE so DB will remove history when item deleted
+    item_id = Column(String(255), ForeignKey("items.id", ondelete="CASCADE"), nullable=False, index=True)
     item_name = Column(String(255), nullable=False)
     item_type = Column(Enum(ItemType), nullable=False)
 
@@ -117,9 +126,11 @@ class ItemStatHistory(Base):
     # Optional metadata
     change_source = Column(String(255), nullable=True)
  
+    # ORM relationship back to the Item
+    item = relationship("Item", back_populates="item_stat_history", passive_deletes=True)
+
     def __repr__(self):
-        return f"<LargeItemStat(item_id='{self.item_id}', total_quantity={self.total_quantity})>"
- 
+        return f"<ItemStatHistory(id='{self.id}', item_id='{self.item_id}', timestamp={self.timestamp})>"
 
 
 # Event listener to generate short IDs for ItemStatHistory ("H-<code><n>")
@@ -153,4 +164,4 @@ def generate_item_stat_history_id(mapper, connection, target):
         next_number = last_number + 1
 
     target.id = f"{prefix}{next_number}"
-    
+

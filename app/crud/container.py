@@ -92,7 +92,7 @@ def create_container(db: Session, container: ContainerCreate) -> Container:
     )
     try:
         db.refresh(created)
-        _update_container_status(db, created.item_id)
+        _update_container_status(db, created.item_id, "Register Container")
         item = db.query(Item).filter(Item.id == created.item_id).first()
         if item:
             db.refresh(item)
@@ -123,7 +123,7 @@ def update_container(db: Session, container_id: str, container: ContainerUpdate)
     if updated:
         try:
             db.refresh(updated)
-            _update_container_status(db, updated.item_id)
+            _update_container_status(db, updated.item_id, "Return Container")
             item = db.query(Item).filter(Item.id == updated.item_id).first()
             if item:
                 db.refresh(item)
@@ -139,7 +139,7 @@ def delete_container(db: Session, container_id: str) -> Optional[Container]:
     deleted = delete_entity_with_rfid_and_storage(db, Container, container_id)
     if deleted and item_id:
         try:
-            _update_container_status(db, item_id)
+            _update_container_status(db, item_id, "Container Consumed")
             item = db.query(Item).filter(Item.id == item_id).first()
             if item:
                 db.refresh(item)
