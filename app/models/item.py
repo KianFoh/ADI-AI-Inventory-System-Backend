@@ -1,7 +1,8 @@
-from sqlalchemy import Column, String, Integer, Enum, Float, ForeignKey
+from sqlalchemy import Column, String, Integer, Enum, Float, ForeignKey, DateTime, func, event, text
 from sqlalchemy.orm import relationship
 from app.database import Base
 import enum
+import uuid
 
 class ItemType(enum.Enum):
     PARTITION = "partition"
@@ -91,8 +92,65 @@ class LargeItemStat(Base):
     high_threshold = Column(Integer, nullable=False)
     low_threshold = Column(Integer, nullable=False)
     stock_status = Column(Enum(StockStatus), nullable=True, index=True)
-
+ 
     item = relationship("Item", back_populates="largeitem_stat")
 
+# New table for dashboard / historical snapshots
+class ItemStatHistory(Base):
+    __tablename__ = "item_stat_history"
+
+    # use short human-readable IDs like "H-P1", "H-C2", "H-L3"
+    id = Column(String(20), primary_key=True, index=True)
+
+    # Snapshot metadata
+    timestamp = Column(DateTime, default=func.now(), nullable=False)
+    item_id = Column(String(255), nullable=False, index=True)
+    item_name = Column(String(255), nullable=False)
+    item_type = Column(Enum(ItemType), nullable=False)
+
+    # Snapshotted stat values
+    total_quantity = Column(Float, nullable=True)
+    total_capacity = Column(Float, nullable=True)
+    total_weight = Column(Float, nullable=True)
+    stock_status = Column(Enum(StockStatus), nullable=True, index=True)
+
+    # Optional metadata
+    change_source = Column(String(255), nullable=True)
+ 
     def __repr__(self):
         return f"<LargeItemStat(item_id='{self.item_id}', total_quantity={self.total_quantity})>"
+ 
+
+
+# Event listener to generate short IDs for ItemStatHistory ("H-<code><n>")
+@event.listens_for(ItemStatHistory, "before_insert")
+def generate_item_stat_history_id(mapper, connection, target):
+    type_code_map = {
+        "partition": "P",
+        "container": "C",
+        "large_item": "L"
+    }
+    # support Enum or raw string
+    type_val = getattr(target.item_type, "value", target.item_type)
+    type_code = type_code_map.get(type_val, "X")
+    prefix = f"ISH-{type_code}"
+
+    # Find last id with this prefix
+    result = connection.execute(
+        text("SELECT id FROM item_stat_history WHERE id LIKE :lk ORDER BY id DESC LIMIT 1"),
+        {"lk": f"{prefix}%" }
+    ).fetchone()
+
+    if result is None:
+        next_number = 1
+    else:
+        last_id = result[0]
+        last_number_str = last_id.replace(prefix, "")
+        try:
+            last_number = int(last_number_str)
+        except Exception:
+            last_number = 0
+        next_number = last_number + 1
+
+    target.id = f"{prefix}{next_number}"
+    

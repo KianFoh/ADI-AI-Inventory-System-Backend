@@ -53,7 +53,7 @@ def generate_transaction_id(mapper, connection, target):
     type_code = type_code_map.get(target.item_type.value, "X")
     prefix = f"T-{type_code}"
 
-    # Query the max existing number for this type
+    # Query the max existing id for this type
     result = connection.execute(
         text(f"SELECT id FROM transactions WHERE id LIKE '{prefix}%' ORDER BY id DESC LIMIT 1")
     ).fetchone()
@@ -61,11 +61,12 @@ def generate_transaction_id(mapper, connection, target):
     if result is None:
         next_number = 1
     else:
-        last_id = result[0]  # e.g., "T-P012"
-        # Extract number part after the prefix
+        last_id = result[0]  # e.g., "T-P12" or "T-P012"
         last_number_str = last_id.replace(prefix, "")
-        last_number = int(last_number_str)
+        try:
+            last_number = int(last_number_str)
+        except Exception:
+            last_number = 0
         next_number = last_number + 1
 
-    # Zero-pad for nice formatting
-    target.id = f"{prefix}{str(next_number).zfill(3)}"
+    target.id = f"{prefix}{next_number}"

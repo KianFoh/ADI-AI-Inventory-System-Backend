@@ -84,6 +84,33 @@ def get_item_types():
 def get_measure_methods():
     return [m.value for m in MeasureMethod]
 
+# ------------------ Counts & Overview (must appear BEFORE the dynamic /{item_id} route) ------------------ #
+@router.get("/count/total", response_model=int)
+def get_item_count(db: Session = Depends(get_db)):
+    return item_crud.get_item_count(db)
+
+@router.get("/count/type/{item_type}", response_model=int)
+def get_item_count_by_type(item_type: str, db: Session = Depends(get_db)):
+    try:
+        item_type_enum = ItemType(item_type.lower())
+    except ValueError:
+        raise HTTPException(status_code=400, detail={"field": "item_type", "message": f"Invalid item type. Must be one of {[t.value for t in ItemType]}"})
+    return item_crud.get_item_count_by_type(db, item_type_enum)
+
+@router.get("/count/manufacturers", response_model=int)
+def get_manufacturer_count(db: Session = Depends(get_db)):
+    return item_crud.get_manufacturer_count(db)
+
+@router.get("/overview", response_model=dict)
+def items_overview(db: Session = Depends(get_db)):
+    try:
+        overview = item_crud.get_items_overview(db)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to compute items overview")
+    return overview
+
 # ------------------ Single Item ------------------ #
 
 @router.get("/{item_id}", response_model=ItemStatsResponse, response_model_exclude_none=True)
@@ -223,20 +250,3 @@ def delete_item(request: Request, item_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail={"field": "item_id", "message": str(e)})
 
 
-# ------------------ Counts ------------------ #
-
-@router.get("/count/total", response_model=int)
-def get_item_count(db: Session = Depends(get_db)):
-    return item_crud.get_item_count(db)
-
-@router.get("/count/type/{item_type}", response_model=int)
-def get_item_count_by_type(item_type: str, db: Session = Depends(get_db)):
-    try:
-        item_type_enum = ItemType(item_type.lower())
-    except ValueError:
-        raise HTTPException(status_code=400, detail={"field": "item_type", "message": f"Invalid item type. Must be one of {[t.value for t in ItemType]}"})
-    return item_crud.get_item_count_by_type(db, item_type_enum)
-
-@router.get("/count/manufacturers", response_model=int)
-def get_manufacturer_count(db: Session = Depends(get_db)):
-    return item_crud.get_manufacturer_count(db)

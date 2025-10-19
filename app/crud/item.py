@@ -1,6 +1,6 @@
 import math
 from sqlalchemy.orm import Session
-from sqlalchemy import func, or_, and_
+from sqlalchemy import func, or_, and_, text
 from app.models.item import Item, ItemType, MeasureMethod, PartitionStat, LargeItemStat, ContainerStat, StockStatus
 from app.models.partition import Partition
 from app.models.large_item import LargeItem
@@ -281,7 +281,7 @@ def _create_initial_stat_for_item(db: Session, db_item: Item, data: dict) -> Non
                                partition_capacity=data.get("partition_capacity"),
                                high_threshold=data.get("partition_high"),
                                low_threshold=data.get("partition_low"),
-                               stock_status=None)
+                               stock_status=StockStatus.LOW)
             db.add(ps)
             db.flush()
             _update_partition_status(db, db_item.id)
@@ -290,7 +290,7 @@ def _create_initial_stat_for_item(db: Session, db_item: Item, data: dict) -> Non
             ls = LargeItemStat(item_id=db_item.id, total_quantity=0,
                                high_threshold=data.get("large_high"),
                                low_threshold=data.get("large_low"),
-                               stock_status=None)
+                               stock_status=StockStatus.LOW)
             db.add(ls)
             db.flush()
             _update_largeitem_status(db, db_item.id)
@@ -304,7 +304,7 @@ def _create_initial_stat_for_item(db: Session, db_item: Item, data: dict) -> Non
                                total_quantity=init_total_qty,
                                high_threshold=data.get("container_high"),
                                low_threshold=data.get("container_low"),
-                               stock_status=None)
+                               stock_status=StockStatus.LOW)
             db.add(cs)
             db.flush()
 
@@ -577,3 +577,52 @@ def _ensure_thresholds_valid(data: dict, effective_item_type: Optional[Union[Ite
     if eit == ItemType.CONTAINER:
         if ch is None or cl is None:
             raise ValueError({"field": "container_high/low", "message": "container_high and container_low are required for container items"})
+
+def get_items_overview(db: Session):
+    # --- total items ---
+    total_items = db.query(func.count(Item.id)).scalar() or 0
+
+    # --- count of registered units (from actual physical tables) ---
+    partitions_count = db.query(func.count(Partition.id)).scalar() or 0
+    large_items_count = db.query(func.count(LargeItem.id)).scalar() or 0
+    containers_count = db.query(func.count(Container.id)).scalar() or 0
+    total_units = partitions_count + large_items_count + containers_count
+
+    # --- helper to count stock status for each stat table ---
+    def stock_count(model, status):
+        return db.query(func.count(model.item_id)).filter(model.stock_status == status).scalar() or 0
+
+    # --- stock breakdown (combine across all stat tables) ---
+    low = (
+        stock_count(PartitionStat, StockStatus.LOW)
+        + stock_count(LargeItemStat, StockStatus.LOW)
+        + stock_count(ContainerStat, StockStatus.LOW)
+    )
+
+    medium = (
+        stock_count(PartitionStat, StockStatus.MEDIUM)
+        + stock_count(LargeItemStat, StockStatus.MEDIUM)
+        + stock_count(ContainerStat, StockStatus.MEDIUM)
+    )
+
+    high = (
+        stock_count(PartitionStat, StockStatus.HIGH)
+        + stock_count(LargeItemStat, StockStatus.HIGH)
+        + stock_count(ContainerStat, StockStatus.HIGH)
+    )
+
+    # --- result ---
+    return {
+        "total_items": total_items,
+        "total_units": total_units,
+        "units_breakdown": {
+            "partitions": partitions_count,
+            "large_items": large_items_count,
+            "containers": containers_count,
+        },
+        "stock": {
+            "low": low,
+            "medium": medium,
+            "high": high,
+        },
+    }
