@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from sqlalchemy import desc, asc, and_, func
+from sqlalchemy import desc, asc, and_, func, or_
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone, timedelta
 from app.models.transaction import Transaction, TransactionType, ItemType
@@ -56,6 +56,17 @@ def get_transactions_filtered(db: Session, filters: TransactionFilter, skip: int
         conditions.append(Transaction.transaction_date >= filters.start_date)
     if filters.end_date:
         conditions.append(Transaction.transaction_date <= filters.end_date)
+    # keyword search across multiple fields
+    if getattr(filters, "search", None):
+        term = f"%{filters.search}%"
+        conditions.append(or_(
+            Transaction.item_id.ilike(term),
+            Transaction.item_name.ilike(term),
+            Transaction.partition_id.ilike(term),
+            Transaction.large_item_id.ilike(term),
+            Transaction.container_id.ilike(term),
+            Transaction.user_name.ilike(term)
+        ))
     
     if conditions:
         query = query.filter(and_(*conditions))

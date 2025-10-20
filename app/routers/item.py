@@ -1,10 +1,12 @@
+from operator import and_
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from fastapi.responses import FileResponse
+from sqlalchemy import distinct, func
 from sqlalchemy.orm import Session
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from app.database import get_db
 from app.crud import item as item_crud
-from app.models.item import ItemType, MeasureMethod
+from app.models.item import ItemStatHistory, ItemType, MeasureMethod, StockStatus
 from app.schemas.item import (
     ItemCreate, 
     ItemUpdate, 
@@ -14,6 +16,36 @@ from app.schemas.item import (
 )
 from app.utils.image import get_image_full_path
 import re
+from datetime import datetime, date, time, timedelta
+import calendar
+import logging
+import traceback
+
+def _period_bounds_for(granularity: str, start_dt: date, idx: int):
+    """
+    Return (period_start_datetime, period_end_datetime, period_label_date) for the idx-th period
+    starting at start_dt. Supports 'day', 'month', 'year'.
+    """
+    if granularity == "day":
+        cur = start_dt + timedelta(days=idx)
+        start_dt_time = datetime.combine(cur, time.min)
+        end_dt_time = datetime.combine(cur, time.max)
+        label = cur
+    elif granularity == "month":
+        y = start_dt.year + (start_dt.month - 1 + idx) // 12
+        m = (start_dt.month - 1 + idx) % 12 + 1
+        label = date(y, m, 1)
+        start_dt_time = datetime.combine(label, time.min)
+        last_day = calendar.monthrange(y, m)[1]
+        end_dt_time = datetime.combine(date(y, m, last_day), time.max)
+    elif granularity == "year":
+        y = start_dt.year + idx
+        label = date(y, 1, 1)
+        start_dt_time = datetime.combine(label, time.min)
+        end_dt_time = datetime.combine(date(y, 12, 31), time.max)
+    else:
+        raise ValueError("unsupported granularity")
+    return start_dt_time, end_dt_time, label
 
 router = APIRouter(
     prefix="/items",
@@ -248,5 +280,28 @@ def delete_item(request: Request, item_id: str, db: Session = Depends(get_db)):
         return item_crud.create_item_response(db, deleted_item, base_url)
     except ValueError as e:
         raise HTTPException(status_code=400, detail={"field": "item_id", "message": str(e)})
+    
+
+# ------------------ Item Status History ------------------ #
+
+@router.get("/history/aggregate", response_model=List[Dict[str, Any]])
+def aggregate_item_status_history(
+    start: str = Query(..., description="ISO date/time start (YYYY-MM-DD or ISO)"),
+    end: str = Query(..., description="ISO date/time end (YYYY-MM-DD or ISO)"),
+    granularity: str = Query("day", description="Aggregation granularity: day|month|year"),
+    db: Session = Depends(get_db),
+) -> List[Dict[str, Any]]:
+    try:
+        points = item_crud.aggregate_item_status_history(db, start=start, end=end, granularity=granularity)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logging.exception("aggregate_item_status_history failed")
+        # include traceback in logs, return message for local debugging
+        tb = traceback.format_exc()
+        logging.debug(tb)
+        # For production do not leak internals; here we return message to help debug locally
+        raise HTTPException(status_code=500, detail=f"Failed to aggregate item status history: {e}")
+    return points
 
 

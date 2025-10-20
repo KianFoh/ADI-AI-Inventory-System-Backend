@@ -1,6 +1,6 @@
 import math
 from sqlalchemy.orm import Session
-from sqlalchemy import func, or_, and_, text
+from sqlalchemy import func, and_, distinct
 from app.models.item import (
     Item,
     ItemType,
@@ -17,6 +17,9 @@ from app.models.container import Container
 from app.schemas.item import ItemCreate, ItemUpdate, ItemResponse, ItemStatsResponse
 from app.utils.image import save_image_from_base64, delete_image, get_image_url
 from typing import List, Optional, Tuple, Dict, Union
+from datetime import datetime, date, time, timedelta
+import calendar
+from typing import List, Dict, Any
 
 # Helper utilities
 def _normalize_input_to_dict(obj: Union[ItemCreate, ItemUpdate, dict]) -> dict:
@@ -421,13 +424,25 @@ def create_item(db: Session, item: Union[ItemCreate, dict]) -> Item:
     db.commit()
     db.refresh(db_item)
 
-    try:
-        _create_initial_stat_for_item(db, db_item, data)
-        db.commit()
-        db.refresh(db_item)
-    except Exception:
-        db.rollback()
-        raise
+    _create_initial_stat_for_item(db, db_item, data)
+    db.commit()
+    db.refresh(db_item)
+
+    # Initial history snapshot for newly created items regardless of "changed" detection.
+    # This ensures the dashboard has a starting point for the item.
+    if db_item.item_type == ItemType.PARTITION:
+        ps = db.query(PartitionStat).filter(PartitionStat.item_id == db_item.id).first()
+        if ps:
+            _maybe_record_stat_history(db, ps, ["total_quantity", "total_capacity", "stock_status"], change_source="Register Item")
+    elif db_item.item_type == ItemType.LARGE_ITEM:
+        ls = db.query(LargeItemStat).filter(LargeItemStat.item_id == db_item.id).first()
+        if ls:
+            _maybe_record_stat_history(db, ls, ["total_quantity", "stock_status"], change_source="Register Item")
+    elif db_item.item_type == ItemType.CONTAINER:
+        cs = db.query(ContainerStat).filter(ContainerStat.item_id == db_item.id).first()
+        if cs:
+            _maybe_record_stat_history(db, cs, ["total_weight", "total_quantity", "stock_status"], change_source="Register Item")
+    db.commit()
 
     return db_item
 
@@ -697,3 +712,88 @@ def get_items_overview(db: Session):
             "high": high,
         },
     }
+
+def aggregate_item_status_history(db: Session, start: str, end: str, granularity: str = "day") -> List[Dict[str, Any]]:
+    """
+    Aggregate ItemStatHistory into periods and count unique items per stock_status for each period.
+    Returns list of {"date": "YYYY-MM-DD", "values": { "low": n, "medium": n, "high": n }}
+    """
+    # parse date-only or full ISO and normalize to date for period iteration
+    try:
+        start_dt = datetime.fromisoformat(start).date()
+        end_dt = datetime.fromisoformat(end).date()
+    except Exception:
+        raise ValueError("start and end must be valid ISO dates (YYYY-MM-DD) or datetimes")
+
+    if end_dt < start_dt:
+        raise ValueError("end must be >= start")
+
+    if granularity not in ("day", "month", "year"):
+        raise ValueError("granularity must be one of: day, month, year")
+
+    # helper to compute period bounds
+    def _period_bounds_for(granularity: str, start_dt: date, idx: int):
+        if granularity == "day":
+            cur = start_dt + timedelta(days=idx)
+            start_dt_time = datetime.combine(cur, time.min)
+            end_dt_time = datetime.combine(cur, time.max)
+            label = cur
+        elif granularity == "month":
+            y = start_dt.year + (start_dt.month - 1 + idx) // 12
+            m = (start_dt.month - 1 + idx) % 12 + 1
+            label = date(y, m, 1)
+            start_dt_time = datetime.combine(label, time.min)
+            last_day = calendar.monthrange(y, m)[1]
+            end_dt_time = datetime.combine(date(y, m, last_day), time.max)
+        else:  # year
+            y = start_dt.year + idx
+            label = date(y, 1, 1)
+            start_dt_time = datetime.combine(label, time.min)
+            end_dt_time = datetime.combine(date(y, 12, 31), time.max)
+        return start_dt_time, end_dt_time, label
+
+    # compute number of periods
+    if granularity == "day":
+        periods = (end_dt - start_dt).days + 1
+    elif granularity == "month":
+        periods = (end_dt.year - start_dt.year) * 12 + (end_dt.month - start_dt.month) + 1
+    else:  # year
+        periods = (end_dt.year - start_dt.year) + 1
+
+    status_keys = [s.value for s in StockStatus]  # canonical keys
+
+    points: List[Dict[str, Any]] = []
+    for idx in range(periods):
+        p_start_dt, p_end_dt, label_date = _period_bounds_for(granularity, start_dt, idx)
+
+        # latest snapshot per item up to period end
+        subq = (
+            db.query(
+                ItemStatHistory.item_id.label("item_id"),
+                func.max(ItemStatHistory.timestamp).label("max_ts")
+            )
+            .filter(ItemStatHistory.timestamp <= p_end_dt)
+            .group_by(ItemStatHistory.item_id)
+            .subquery()
+        )
+
+        rows = (
+            db.query(ItemStatHistory.stock_status, func.count(distinct(ItemStatHistory.item_id)).label("cnt"))
+            .join(subq, and_(
+                ItemStatHistory.item_id == subq.c.item_id,
+                ItemStatHistory.timestamp == subq.c.max_ts
+            ))
+            .group_by(ItemStatHistory.stock_status)
+            .all()
+        )
+
+        values = {k: 0 for k in status_keys}
+        for stock_enum, cnt in rows:
+            if stock_enum is None:
+                continue
+            key = getattr(stock_enum, "value", str(stock_enum))
+            values[key] = int(cnt)
+
+        points.append({"date": label_date.isoformat(), "values": values})
+
+    return points

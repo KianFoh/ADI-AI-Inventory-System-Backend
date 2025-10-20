@@ -33,11 +33,34 @@ def get_transactions(
     page_size: int = Query(10, ge=1, le=100),
     sort_by: str = Query("transaction_date"),
     sort_order: str = Query("desc", regex="^(asc|desc)$"),
+    search: Optional[str] = Query(None, description="Keyword to match item id, item name, unit id or user name"),
+    start_date: Optional[datetime] = Query(None, description="Filter transactions from this datetime (inclusive)"),
+    end_date: Optional[datetime] = Query(None, description="Filter transactions up to this datetime (inclusive)"),
+    transaction_types: Optional[List[TransactionType]] = Query(None, description="Filter by transaction types"),
     db: Session = Depends(get_db)
 ):
     skip = (page - 1) * page_size
-    transactions = transaction_crud.get_transactions(db, skip=skip, limit=page_size, sort_by=sort_by, sort_order=sort_order)
-    total_count = transaction_crud.get_transaction_count(db)
+
+    # If any filter/search provided use the filtered CRUD which returns (transactions, total_count)
+    if any([search, start_date, end_date, transaction_types]):
+        filters = TransactionFilter(
+            search=search,
+            start_date=start_date,
+            end_date=end_date,
+            transaction_types=transaction_types
+        )
+        transactions, total_count = transaction_crud.get_transactions_filtered(
+            db,
+            filters=filters,
+            skip=skip,
+            limit=page_size,
+            sort_by=sort_by,
+            sort_order=sort_order
+        )
+    else:
+        transactions = transaction_crud.get_transactions(db, skip=skip, limit=page_size, sort_by=sort_by, sort_order=sort_order)
+        total_count = transaction_crud.get_transaction_count(db)
+
     return _paginate_response(transactions, total_count, page, page_size)
 
 @router.post("/filter", response_model=PaginatedTransactionsResponse)

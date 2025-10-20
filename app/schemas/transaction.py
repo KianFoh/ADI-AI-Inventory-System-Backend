@@ -97,8 +97,8 @@ class TransactionResponse(TransactionBase):
 
 
 class PaginatedTransactionsResponse(BaseModel):
-    transactions: List[TransactionResponse]
-    total_transactions: int
+    items: List[TransactionResponse]
+    total: int
     page: int
     page_size: int
     total_pages: int
@@ -109,8 +109,8 @@ class PaginatedTransactionsResponse(BaseModel):
     def create(cls, transactions: List[TransactionResponse], total_count: int, page: int, page_size: int):
         total_pages = math.ceil(total_count / page_size) if total_count > 0 else 0
         return cls(
-            transactions=transactions,
-            total_transactions=total_count,
+            items=transactions,
+            total=total_count,
             page=page,
             page_size=page_size,
             total_pages=total_pages,
@@ -120,6 +120,7 @@ class PaginatedTransactionsResponse(BaseModel):
 
 
 class TransactionFilter(BaseModel):
+    search: Optional[str] = None
     transaction_types: Optional[List[TransactionType]] = None
     item_types: Optional[List[ItemType]] = None
     item_ids: Optional[List[str]] = None
