@@ -19,7 +19,10 @@ from app.utils.image import save_image_from_base64, delete_image, get_image_url
 from typing import List, Optional, Tuple, Dict, Union
 from datetime import datetime, date, time, timedelta
 import calendar
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
+from sqlalchemy import func
+from sqlalchemy.orm import Session
+from app.models.item import ItemStatHistory, StockStatus
 
 # Helper utilities
 def _normalize_input_to_dict(obj: Union[ItemCreate, ItemUpdate, dict]) -> dict:
@@ -793,6 +796,127 @@ def aggregate_item_status_history(db: Session, start: str, end: str, granularity
                 continue
             key = getattr(stock_enum, "value", str(stock_enum))
             values[key] = int(cnt)
+
+        points.append({"date": label_date.isoformat(), "values": values})
+
+    return points
+
+def aggregate_item_history_for_item(
+    db: Session,
+    item_id: str,
+    start: str,
+    end: str,
+    granularity: str = "day",
+) -> List[Dict[str, Any]]:
+    """
+    For a single item: return time-series points for each period between start..end (inclusive)
+    where a snapshot exists <= period_end. Periods before item registration (change_source='item_created'
+    or first snapshot) are omitted.
+
+    Each point: {"date": "YYYY-MM-DD", "values": { "total_quantity": 10, "total_capacity": 5, "total_weight": 2.5, "stock_status": "low" }}
+    Only keys that exist on the snapshot are included.
+    """
+    # parse date-only or full ISO; use date portion for period iteration
+    try:
+        start_dt = datetime.fromisoformat(start).date()
+        end_dt = datetime.fromisoformat(end).date()
+    except Exception:
+        raise ValueError("start and end must be valid ISO dates or datetimes (YYYY-MM-DD or ISO)")
+
+    if end_dt < start_dt:
+        raise ValueError("end must be >= start")
+
+    if granularity not in ("day", "month", "year"):
+        raise ValueError("granularity must be one of: day, month, year")
+
+    # find earliest registration snapshot (prefer change_source == 'item_created')
+    created_row = (
+        db.query(ItemStatHistory)
+        .filter(ItemStatHistory.item_id == item_id, ItemStatHistory.change_source == "item_created")
+        .order_by(ItemStatHistory.timestamp.asc())
+        .first()
+    )
+    first_row = (
+        db.query(ItemStatHistory)
+        .filter(ItemStatHistory.item_id == item_id)
+        .order_by(ItemStatHistory.timestamp.asc())
+        .first()
+    )
+
+    if not first_row:
+        # no history for this item at all
+        return []
+
+    reg_date = (created_row.timestamp.date() if created_row else first_row.timestamp.date())
+
+    # do not include periods before registration
+    if start_dt < reg_date:
+        start_dt = reg_date
+
+    if end_dt < start_dt:
+        return []
+
+    def _period_bounds_for(granularity: str, start_dt: date, idx: int):
+        if granularity == "day":
+            cur = start_dt + timedelta(days=idx)
+            start_dt_time = datetime.combine(cur, time.min)
+            end_dt_time = datetime.combine(cur, time.max)
+            label = cur
+        elif granularity == "month":
+            y = start_dt.year + (start_dt.month - 1 + idx) // 12
+            m = (start_dt.month - 1 + idx) % 12 + 1
+            label = date(y, m, 1)
+            start_dt_time = datetime.combine(label, time.min)
+            last_day = calendar.monthrange(y, m)[1]
+            end_dt_time = datetime.combine(date(y, m, last_day), time.max)
+        else:  # year
+            y = start_dt.year + idx
+            label = date(y, 1, 1)
+            start_dt_time = datetime.combine(label, time.min)
+            end_dt_time = datetime.combine(date(y, 12, 31), time.max)
+        return start_dt_time, end_dt_time, label
+
+    # compute number of periods
+    if granularity == "day":
+        periods = (end_dt - start_dt).days + 1
+    elif granularity == "month":
+        periods = (end_dt.year - start_dt.year) * 12 + (end_dt.month - start_dt.month) + 1
+    else:
+        periods = (end_dt.year - start_dt.year) + 1
+
+    points: List[Dict[str, Any]] = []
+    for idx in range(periods):
+        _, p_end_dt, label_date = _period_bounds_for(granularity, start_dt, idx)
+
+        # latest snapshot timestamp for this item up to period end
+        latest_ts = (
+            db.query(func.max(ItemStatHistory.timestamp))
+            .filter(ItemStatHistory.item_id == item_id, ItemStatHistory.timestamp <= p_end_dt)
+            .scalar()
+        )
+        if latest_ts is None:
+            # no snapshot yet for this period -> skip (do not return zeros)
+            continue
+
+        row = (
+            db.query(ItemStatHistory)
+            .filter(ItemStatHistory.item_id == item_id, ItemStatHistory.timestamp == latest_ts)
+            .first()
+        )
+        if not row:
+            continue
+
+        values: Dict[str, Any] = {}
+        if row.total_quantity is not None:
+            # preserve ints when whole number, else float
+            values["total_quantity"] = int(row.total_quantity) if float(row.total_quantity).is_integer() else float(row.total_quantity)
+        if row.total_capacity is not None:
+            values["total_capacity"] = int(row.total_capacity) if float(row.total_capacity).is_integer() else float(row.total_capacity)
+        if row.total_weight is not None:
+            values["total_weight"] = float(row.total_weight)
+        # include stock_status string for convenience
+        if row.stock_status is not None:
+            values["stock_status"] = getattr(row.stock_status, "value", str(row.stock_status))
 
         points.append({"date": label_date.isoformat(), "values": values})
 

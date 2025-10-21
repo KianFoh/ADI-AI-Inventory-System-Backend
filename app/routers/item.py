@@ -304,4 +304,27 @@ def aggregate_item_status_history(
         raise HTTPException(status_code=500, detail=f"Failed to aggregate item status history: {e}")
     return points
 
+@router.get("/{item_id}/history", response_model=List[Dict[str, Any]])
+def get_item_history(
+    item_id: str,
+    start: str = Query(..., description="ISO date/time start (YYYY-MM-DD or ISO)"),
+    end: str = Query(..., description="ISO date/time end (YYYY-MM-DD or ISO)"),
+    granularity: str = Query("day", description="Aggregation granularity: day|month|year"),
+    db: Session = Depends(get_db),
+) -> List[Dict[str, Any]]:
+    """
+    Return time-series stat snapshots for a single item.
+    Periods before the item was registered (change_source='item_created' or first snapshot) are omitted.
+    """
+    try:
+        points = item_crud.aggregate_item_history_for_item(db, item_id=item_id, start=start, end=end, granularity=granularity)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logging.exception("get_item_history failed")
+        tb = traceback.format_exc()
+        logging.debug(tb)
+        raise HTTPException(status_code=500, detail=f"Failed to aggregate item history: {e}")
+    return points
+
 
