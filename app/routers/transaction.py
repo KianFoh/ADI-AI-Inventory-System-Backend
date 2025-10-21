@@ -12,6 +12,10 @@ from app.schemas.transaction import (
     TransactionStats
 )
 from app.models.transaction import TransactionType, ItemType
+import io
+import csv
+from datetime import datetime as _dt
+from fastapi.responses import StreamingResponse
 
 router = APIRouter(
     prefix="/transactions",
@@ -37,17 +41,19 @@ def get_transactions(
     start_date: Optional[datetime] = Query(None, description="Filter transactions from this datetime (inclusive)"),
     end_date: Optional[datetime] = Query(None, description="Filter transactions up to this datetime (inclusive)"),
     transaction_types: Optional[List[TransactionType]] = Query(None, description="Filter by transaction types"),
+    item_types: Optional[List[ItemType]] = Query(None, description="Filter by item types"),
     db: Session = Depends(get_db)
 ):
     skip = (page - 1) * page_size
 
     # If any filter/search provided use the filtered CRUD which returns (transactions, total_count)
-    if any([search, start_date, end_date, transaction_types]):
+    if any([search, start_date, end_date, transaction_types, item_types]):
         filters = TransactionFilter(
             search=search,
             start_date=start_date,
             end_date=end_date,
-            transaction_types=transaction_types
+            transaction_types=transaction_types,
+            item_types=item_types
         )
         transactions, total_count = transaction_crud.get_transactions_filtered(
             db,
@@ -62,6 +68,61 @@ def get_transactions(
         total_count = transaction_crud.get_transaction_count(db)
 
     return _paginate_response(transactions, total_count, page, page_size)
+
+# Total count
+@router.get("/count/total", response_model=int)
+def get_transaction_count(db: Session = Depends(get_db)):
+    return transaction_crud.get_transaction_count(db)
+
+@router.get("/export")
+def export_transactions_csv(
+    sort_by: str = Query("transaction_date"),
+    sort_order: str = Query("desc", regex="^(asc|desc)$"),
+    search: Optional[str] = Query(None, description="Keyword to match item id, item name, unit id or user name"),
+    start_date: Optional[datetime] = Query(None, description="Filter transactions from this datetime (inclusive)"),
+    end_date: Optional[datetime] = Query(None, description="Filter transactions up to this datetime (inclusive)"),
+    transaction_types: Optional[List[TransactionType]] = Query(None, description="Filter by transaction types"),
+    item_types: Optional[List[ItemType]] = Query(None, description="Filter by item types"),
+    db: Session = Depends(get_db),
+):
+    """
+    Export transactions matching the same filters as the list endpoint.
+    Returns a streaming CSV attachment.
+    """
+    filters = None
+    if any([search, start_date, end_date, transaction_types, item_types]):
+        filters = TransactionFilter(
+            search=search,
+            start_date=start_date,
+            end_date=end_date,
+            transaction_types=transaction_types,
+            item_types=item_types
+        )
+
+    rows = transaction_crud.get_transactions_for_export(db, filters=filters, sort_by=sort_by, sort_order=sort_order)
+
+    headers = [
+        "id", "transaction_date", "transaction_type", "item_type", "item_id", "item_name",
+        "unit_id", "partition_id", "large_item_id", "container_id", "storage_section_id",
+        "user_name", "previous_quantity", "current_quantity", "quantity_change",
+        "previous_weight", "current_weight", "weight_change", "notes"
+    ]
+
+    def iter_csv():
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow(headers)
+        yield buf.getvalue()
+        buf.seek(0); buf.truncate(0)
+        for r in rows:
+            out = [r.get(h, "") for h in headers]
+            writer.writerow(out)
+            yield buf.getvalue()
+            buf.seek(0); buf.truncate(0)
+
+    stamp = _dt.utcnow().strftime("%Y%m%dT%H%M%SZ")
+    filename = f"transactions_{stamp}.csv"
+    return StreamingResponse(iter_csv(), media_type="text/csv", headers={"Content-Disposition": f"attachment; filename={filename}"})
 
 @router.post("/filter", response_model=PaginatedTransactionsResponse)
 def get_filtered_transactions(
@@ -180,7 +241,4 @@ def delete_transaction(transaction_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"field": "transaction_id", "message": "Transaction not found"})
     return {"message": "Transaction deleted successfully"}
 
-# Total count
-@router.get("/count/total", response_model=int)
-def get_transaction_count(db: Session = Depends(get_db)):
-    return transaction_crud.get_transaction_count(db)
+
