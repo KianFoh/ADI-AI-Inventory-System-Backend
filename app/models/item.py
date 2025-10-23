@@ -137,31 +137,19 @@ class ItemStatHistory(Base):
 @event.listens_for(ItemStatHistory, "before_insert")
 def generate_item_stat_history_id(mapper, connection, target):
     type_code_map = {
-        "partition": "P",
-        "container": "C",
-        "large_item": "L"
+        "partition": ("P", "ish_P_seq"),
+        "container": ("C", "ish_C_seq"),
+        "large_item": ("L", "ish_L_seq")
     }
-    # support Enum or raw string
     type_val = getattr(target.item_type, "value", target.item_type)
-    type_code = type_code_map.get(type_val, "X")
-    prefix = f"ISH-{type_code}"
-
-    # Find last id with this prefix
-    result = connection.execute(
-        text("SELECT id FROM item_stat_history WHERE id LIKE :lk ORDER BY id DESC LIMIT 1"),
-        {"lk": f"{prefix}%" }
-    ).fetchone()
-
-    if result is None:
-        next_number = 1
-    else:
-        last_id = result[0]
-        last_number_str = last_id.replace(prefix, "")
-        try:
-            last_number = int(last_number_str)
-        except Exception:
-            last_number = 0
-        next_number = last_number + 1
-
-    target.id = f"{prefix}{next_number}"
+    code, seq_name = type_code_map.get(type_val, ("X", "ish_X_seq"))
+    # Ensure sequence exists before selecting nextval (avoids transaction abort on SELECT failure)
+    try:
+        connection.execute(text(f"CREATE SEQUENCE IF NOT EXISTS {seq_name} START 1"))
+    except Exception:
+        # best-effort: ignore if cannot create (migration-managed environments should pre-create)
+        pass
+    # now safely get next value
+    next_val = connection.execute(text(f"SELECT nextval('{seq_name}')")).scalar()
+    target.id = f"ISH-{code}{int(next_val)}"
 
