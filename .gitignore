@@ -1,5 +1,6 @@
 # Custom
 rcnn_model_v1.pth
+rcnn_model_v2.pth
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

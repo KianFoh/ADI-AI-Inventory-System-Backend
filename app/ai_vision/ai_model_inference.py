@@ -14,7 +14,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Always resolve relative to this file’s folder
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-MODEL_PATH = os.path.join(BASE_DIR, "rcnn_model_v1.pth")
+MODEL_PATH = os.path.join(BASE_DIR, "rcnn_model_v2.pth")
 
 if not os.path.exists(MODEL_PATH):
     logging.error(f"Model file not found: {MODEL_PATH}")
@@ -23,7 +23,42 @@ if not os.path.exists(MODEL_PATH):
 logging.info(f"Loading model from {MODEL_PATH} (device={device})")
 
 _model = get_model()
-_model.load_state_dict(torch.load(MODEL_PATH, map_location=device))
+
+# load checkpoint (support training checkpoints that wrap state dict)
+checkpoint = torch.load(MODEL_PATH, map_location=device)
+
+# extract possible state dict keys used by common training scripts
+if isinstance(checkpoint, dict):
+    if "model_state_dict" in checkpoint:
+        state_dict = checkpoint["model_state_dict"]
+    elif "state_dict" in checkpoint:
+        state_dict = checkpoint["state_dict"]
+    else:
+        # might be already a raw state_dict (or a saved full model dict)
+        state_dict = checkpoint
+else:
+    state_dict = checkpoint
+
+# remove "module." prefix if present (from DataParallel)
+if isinstance(state_dict, dict):
+    normalized_state = {}
+    for k, v in state_dict.items():
+        new_k = k.replace("module.", "") if k.startswith("module.") else k
+        normalized_state[new_k] = v
+else:
+    normalized_state = state_dict
+
+# try strict loading first, fallback to non-strict and log
+try:
+    _model.load_state_dict(normalized_state)
+except RuntimeError as e:
+    logging.warning("Strict load_state_dict failed: %s. Retrying with strict=False.", e)
+    try:
+        _model.load_state_dict(normalized_state, strict=False)
+    except Exception as e2:
+        logging.error("Failed to load model state_dict even with strict=False: %s", e2)
+        raise
+
 _model.to(device)
 _model.eval()
 
@@ -33,7 +68,7 @@ logging.info("Model loaded successfully and set to evaluation mode.")
 # -------------------------------------------------------------
 # Inference function
 # -------------------------------------------------------------
-def run_inference_from_bytes(image_bytes: bytes, score_threshold: float = 0.5):
+def run_inference_from_bytes(image_bytes: bytes, score_threshold: float = 0.9):
     """
     Run inference on an image from bytes and return:
       - number of empty slots
