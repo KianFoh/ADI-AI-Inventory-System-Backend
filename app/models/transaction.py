@@ -62,5 +62,5 @@ def generate_transaction_id(mapper, connection, target):
     next_val = connection.execute(text(f"SELECT nextval('{seq_name}')")).fetchone()[0]
     next_number = int(next_val)
 
-    # format ID consistently (zero-padded)
-    target.id = f"T-{type_code}{str(next_number).zfill(3)}"
+    # no zero-padding — just use the raw number
+    target.id = f"T-{type_code}{next_number}"

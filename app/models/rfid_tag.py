@@ -18,13 +18,11 @@ class RFIDTag(Base):
 @event.listens_for(RFIDTag, "before_insert")
 def generate_rfid_id(mapper, connection, target):
     prefix = "RF"
-    result = connection.execute(
-        text(f"SELECT id FROM rfid_tags WHERE id LIKE '{prefix}%' ORDER BY CAST(SUBSTRING(id, 3) AS INTEGER) DESC LIMIT 1")
-    ).fetchone()
-    if result is None:
-        next_number = 1
-    else:
-        last_id = result[0]
-        last_number = int(last_id[2:]) 
-        next_number = last_number + 1
-    target.id = f"{prefix}{next_number}"
+    seq_name = "rfid_seq"
+
+    # ensure sequence exists (or create via migration in production)
+    connection.execute(text(f"CREATE SEQUENCE IF NOT EXISTS {seq_name} START 1"))
+
+    # atomically get next value
+    next_val = connection.execute(text(f"SELECT nextval('{seq_name}')")).scalar()
+    target.id = f"{prefix}{int(next_val)}"
