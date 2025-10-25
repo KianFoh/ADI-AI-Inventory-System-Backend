@@ -4,6 +4,7 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone, timedelta
 from app.models.transaction import Transaction, TransactionType, ItemType
 from app.schemas.transaction import TransactionCreate, TransactionFilter
+from app.crud.general import order_by_numeric_suffix
 
 def create_transaction(db: Session, transaction: TransactionCreate) -> Transaction:
     """Create a new transaction"""
@@ -35,7 +36,11 @@ def get_transaction(db: Session, transaction_id: str) -> Optional[Transaction]:
 
 def get_transactions(db: Session, skip: int = 0, limit: int = 100, sort_by: str = "transaction_date", sort_order: str = "desc") -> List[Transaction]:
     query = db.query(Transaction)
-    query = query.order_by(desc(getattr(Transaction, sort_by)) if sort_order.lower() == "desc" else asc(getattr(Transaction, sort_by)))
+    if sort_by == "id":
+        query = order_by_numeric_suffix(query, Transaction.id, asc=(sort_order.lower() != "desc"))
+    else:
+        attr = getattr(Transaction, sort_by, Transaction.transaction_date)
+        query = query.order_by(desc(attr) if sort_order.lower() == "desc" else asc(attr))
     return query.offset(skip).limit(limit).all()
 
 def get_transactions_filtered(db: Session, filters: TransactionFilter, skip: int = 0, limit: int = 100, sort_by: str = "transaction_date", sort_order: str = "desc") -> tuple[List[Transaction], int]:
@@ -72,7 +77,11 @@ def get_transactions_filtered(db: Session, filters: TransactionFilter, skip: int
         query = query.filter(and_(*conditions))
     
     total_count = query.count()
-    query = query.order_by(desc(getattr(Transaction, sort_by)) if sort_order.lower() == "desc" else asc(getattr(Transaction, sort_by)))
+    if sort_by == "id":
+        query = order_by_numeric_suffix(query, Transaction.id, asc=(sort_order.lower() != "desc"))
+    else:
+        attr = getattr(Transaction, sort_by, Transaction.transaction_date)
+        query = query.order_by(desc(attr) if sort_order.lower() == "desc" else asc(attr))
     transactions = query.offset(skip).limit(limit).all()
     
     return transactions, total_count

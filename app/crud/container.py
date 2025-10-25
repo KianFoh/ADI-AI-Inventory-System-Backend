@@ -6,7 +6,8 @@ from app.schemas.container import ContainerCreate, ContainerUpdate
 from app.crud.general import (
     create_entity_with_rfid_and_storage,
     delete_entity_with_rfid_and_storage,
-    update_entity_with_rfid_and_storage
+    update_entity_with_rfid_and_storage,
+    order_by_numeric_suffix
 )
 from typing import List, Optional, Tuple
 import math
@@ -42,7 +43,8 @@ def get_containers(
     if status:
         query = query.filter(Container.status == status)
 
-    query = query.order_by(Container.id)
+    # order by numeric suffix of id for human-friendly numeric ordering (Postgres)
+    query = order_by_numeric_suffix(query, Container.id)
     total_count = query.count()
 
     skip = (page - 1) * page_size
@@ -150,22 +152,15 @@ def delete_container(db: Session, container_id: str) -> Optional[Container]:
 
 def get_containers_by_item(db: Session, item_id: str) -> List[Container]:
     """Get all containers for a specific item"""
-    return (
-        db.query(Container)
-        .filter(Container.item_id == item_id)
-        .order_by(Container.id)
-        .all()
-    )
-
+    query = db.query(Container).filter(Container.item_id == item_id)
+    query = order_by_numeric_suffix(query, Container.id)
+    return query.all()
 
 def get_containers_by_storage_section(db: Session, storage_section_id: str) -> List[Container]:
     """Get all containers in a storage section"""
-    return (
-        db.query(Container)
-        .filter(Container.storage_section_id == storage_section_id)
-        .order_by(Container.id)
-        .all()
-    )
+    query = db.query(Container).filter(Container.storage_section_id == storage_section_id)
+    query = order_by_numeric_suffix(query, Container.id)
+    return query.all()
 
 
 def get_container_count(db: Session) -> int:

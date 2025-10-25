@@ -8,7 +8,8 @@ from app.schemas.large_item import LargeItemCreate, LargeItemUpdate
 from app.crud.general import (
     create_entity_with_rfid_and_storage, 
     delete_entity_with_rfid_and_storage,
-    update_entity_with_rfid_and_storage
+    update_entity_with_rfid_and_storage,
+    order_by_numeric_suffix
 )
 from typing import List, Optional, Tuple
 # import updater
@@ -47,8 +48,10 @@ def get_large_items(
     if status:
         query = query.filter(LargeItem.status == status)
     
+    # order by numeric suffix of id for human-friendly numeric ordering (Postgres)
+    query = order_by_numeric_suffix(query, LargeItem.id, asc=True)
     total_count = query.count()
-    large_items = query.order_by(LargeItem.id).offset((page - 1) * page_size).limit(page_size).all()
+    large_items = query.offset((page - 1) * page_size).limit(page_size).all()
     
     return large_items, total_count
 
@@ -121,18 +124,22 @@ def delete_large_item(db: Session, large_item_id: str) -> Optional[LargeItem]:
     return deleted
 
 def get_large_items_by_item(db: Session, item_id: str) -> List[LargeItem]:
-    return db.query(LargeItem).options(
+    query = db.query(LargeItem).options(
         joinedload(LargeItem.item),
         joinedload(LargeItem.storage_section),
         joinedload(LargeItem.rfid_tag)
-    ).filter(LargeItem.item_id == item_id).order_by(LargeItem.id).all()
+    ).filter(LargeItem.item_id == item_id)
+    query = order_by_numeric_suffix(query, LargeItem.id)
+    return query.all()
 
 def get_large_items_by_storage_section(db: Session, storage_section_id: str) -> List[LargeItem]:
-    return db.query(LargeItem).options(
+    query = db.query(LargeItem).options(
         joinedload(LargeItem.item),
         joinedload(LargeItem.storage_section),
         joinedload(LargeItem.rfid_tag)
-    ).filter(LargeItem.storage_section_id == storage_section_id).order_by(LargeItem.id).all()
+    ).filter(LargeItem.storage_section_id == storage_section_id)
+    query = order_by_numeric_suffix(query, LargeItem.id)
+    return query.all()
 
 def get_large_item_count(db: Session) -> int:
     return db.query(LargeItem).count()

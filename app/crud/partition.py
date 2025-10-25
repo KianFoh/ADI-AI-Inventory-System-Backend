@@ -13,6 +13,7 @@ from app.crud.general import (
 from typing import List, Optional, Tuple
 # import updater
 from app.crud.item import _update_partition_status
+from app.crud.general import order_by_numeric_suffix
 
 def get_partition(db: Session, partition_id: str) -> Optional[Partition]:
     """Get partition by ID"""
@@ -41,7 +42,8 @@ def get_partitions(
     if status:
         query = query.filter(Partition.status == status)
     
-    query = query.order_by(Partition.id)
+    # order by numeric suffix of id (Postgres). Falls back to string id for deterministic ordering.
+    query = order_by_numeric_suffix(query, Partition.id, asc=True)
     total_count = query.count()
     
     skip = (page - 1) * page_size
@@ -155,11 +157,15 @@ def delete_partition(db: Session, partition_id: str) -> Optional[Partition]:
 
 def get_partitions_by_item(db: Session, item_id: str) -> List[Partition]:
     """Get partitions by item ID"""
-    return db.query(Partition).filter(Partition.item_id == item_id).order_by(Partition.id).all()
+    query = db.query(Partition).filter(Partition.item_id == item_id)
+    query = order_by_numeric_suffix(query, Partition.id)
+    return query.all()
 
 def get_partitions_by_storage_section(db: Session, storage_section_id: str) -> List[Partition]:
     """Get partitions by storage section ID"""
-    return db.query(Partition).filter(Partition.storage_section_id == storage_section_id).order_by(Partition.id).all()
+    query = db.query(Partition).filter(Partition.storage_section_id == storage_section_id)
+    query = order_by_numeric_suffix(query, Partition.id)
+    return query.all()
 
 def get_partition_count(db: Session) -> int:
     """Get total partition count"""

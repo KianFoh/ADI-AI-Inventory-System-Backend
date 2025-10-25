@@ -11,6 +11,7 @@ from app.models.item import (
     StockStatus,
     ItemStatHistory,
 )
+from app.crud.general import order_by_numeric_suffix
 from app.models.partition import Partition
 from app.models.large_item import LargeItem
 from app.models.container import Container
@@ -242,7 +243,9 @@ def create_item_response(db: Session, item: Item, base_url: str = "") -> ItemRes
         }
 
     if item.item_type == ItemType.PARTITION:
-        partitions = db.query(Partition).filter(Partition.item_id == item.id).order_by(Partition.id).all()
+        query = db.query(Partition).filter(Partition.item_id == item.id)
+        query = order_by_numeric_suffix(query, Partition.id)
+        partitions = query.all()
         partitions_list = [
             {
                 "id": p.id,
@@ -347,7 +350,8 @@ def get_items(
         )
         query = query.filter(status_cond)
 
-    query = query.order_by(Item.id)
+    # order by numeric suffix of id for human-friendly numeric ordering (Postgres)
+    query = order_by_numeric_suffix(query, Item.id)
     total_count = query.count()
     skip = (page - 1) * page_size
     items = query.offset(skip).limit(page_size).all()

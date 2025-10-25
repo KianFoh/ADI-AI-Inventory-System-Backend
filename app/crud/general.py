@@ -1,4 +1,7 @@
 from sqlalchemy.orm import Session
+from sqlalchemy import func
+from sqlalchemy.sql import expression
+from sqlalchemy import BigInteger
 from app.models.item import Item, ItemType
 from app.models.storage_section import StorageSection
 from app.models.rfid_tag import RFIDTag
@@ -136,3 +139,15 @@ def update_entity_with_rfid_and_storage(
     except Exception:
         db.rollback()
         raise
+
+
+def order_by_numeric_suffix(query, column, asc=False):
+    """
+    Order SQLAlchemy query by the numeric suffix of `column` (Postgres).
+    Usage: query = order_by_numeric_suffix(query, Model.id, asc=False)
+    """
+    # regexp_replace(..., '\D', '', 'g') -> digits only ('' if none)
+    numeric_part = func.nullif(func.regexp_replace(column, r'\D', '', 'g'), '').cast(BigInteger)
+    if asc:
+        return query.order_by(numeric_part.asc(), column.asc())
+    return query.order_by(numeric_part.desc(), column.desc())

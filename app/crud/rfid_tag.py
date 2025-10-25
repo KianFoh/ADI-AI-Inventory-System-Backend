@@ -7,6 +7,7 @@ from app.models.partition import Partition
 from app.models.container import Container
 from app.models.item import Item
 from typing import List, Optional, Tuple, Dict, Any
+from app.crud.general import order_by_numeric_suffix
 
 def get_rfid_tag(db: Session, tag_id: str) -> Optional[RFIDTagResponse]:
     tag = db.query(RFIDTag).filter(RFIDTag.id == tag_id).first()
@@ -34,7 +35,8 @@ def get_rfid_tags(
     total_count = query.count()
     
     skip = (page - 1) * page_size
-    tags = query.order_by(RFIDTag.id).offset(skip).limit(page_size).all()
+    query = order_by_numeric_suffix(query, RFIDTag.id)
+    tags = query.offset(skip).limit(page_size).all()
 
     results: List[Dict[str, Any]] = []
     for t in tags:
