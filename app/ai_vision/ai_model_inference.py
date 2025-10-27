@@ -68,7 +68,7 @@ logging.info("Model loaded successfully and set to evaluation mode.")
 # -------------------------------------------------------------
 # Inference function
 # -------------------------------------------------------------
-def run_inference_from_bytes(image_bytes: bytes, score_threshold: float = 0.9):
+def run_inference_from_bytes(image_bytes: bytes, score_threshold: float = 0.5):
     """
     Run inference on an image from bytes and return:
       - number of empty slots

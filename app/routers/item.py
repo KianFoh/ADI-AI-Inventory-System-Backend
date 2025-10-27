@@ -227,6 +227,11 @@ def create_item(request: Request, item: ItemCreate, db: Session = Depends(get_db
 def update_item(request: Request, item_id: str, item: ItemUpdate, db: Session = Depends(get_db)):
     update_payload = item.model_dump(exclude_unset=True)
 
+    # If the following fields are omitted in the payload, explicitly set them to NULL in DB
+    for _f in ("manufacturer", "tooling_used", "vendor_pn", "sap_pn", "package_used"):
+        if _f not in update_payload:
+            update_payload[_f] = None
+
     # If process/name present, combine to stored name
     proc = update_payload.get("process")
     name_val = update_payload.get("name")
