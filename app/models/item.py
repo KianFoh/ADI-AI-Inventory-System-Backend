@@ -27,7 +27,7 @@ class Item(Base):
     manufacturer = Column(String(255), nullable=True, index=True)
     item_type = Column(Enum(ItemType), nullable=False)
     measure_method = Column(Enum(MeasureMethod), nullable=True)
-    image_path = Column(String(500), nullable=True)
+    image_path = Column(String(500), nullable=False)
 
     process = Column(String(50), nullable=False, index=True)
     tooling_used = Column(String(255), nullable=True)
@@ -58,15 +58,15 @@ class PartitionStat(Base):
     __tablename__ = "partition_stats"
     item_id = Column(String(255), ForeignKey("items.id"), primary_key=True, index=True)
     # keep per-partition totals / thresholds here
-    total_quantity = Column(Integer, nullable=True)
-    total_capacity = Column(Integer, nullable=True)
+    total_quantity = Column(Integer, nullable=False)
+    total_capacity = Column(Integer, nullable=False)
     # original partition_capacity (moved here)
-    partition_capacity = Column(Integer, nullable=True)
+    partition_capacity = Column(Integer, nullable=False)
     # unified threshold names
     high_threshold = Column(Float, nullable=False)   # percent 0-100 (required)
     low_threshold = Column(Float, nullable=False)    # percent 0-100 (required)
     # optional overall status for this stat row
-    stock_status = Column(Enum(StockStatus), nullable=True, index=True)
+    stock_status = Column(Enum(StockStatus), nullable=False, index=True)
 
     item = relationship("Item", back_populates="partition_stat")
 
@@ -78,14 +78,14 @@ class ContainerStat(Base):
     item_id = Column(String(255), ForeignKey("items.id"), primary_key=True, index=True)
     # container-specific weights moved here
     container_item_weight = Column(Float, nullable=True)
-    container_weight = Column(Float, nullable=True)
+    container_weight = Column(Float, nullable=False)
     # aggregated container totals / thresholds
-    total_weight = Column(Float, nullable=True)
+    total_weight = Column(Float, nullable=False)
     total_quantity = Column(Integer, nullable=True)
     # unified threshold names
     high_threshold = Column(Float, nullable=False)
     low_threshold = Column(Float, nullable=False)
-    stock_status = Column(Enum(StockStatus), nullable=True, index=True)
+    stock_status = Column(Enum(StockStatus), nullable=False, index=True)
 
     item = relationship("Item", back_populates="container_stat")
 
@@ -95,11 +95,10 @@ class ContainerStat(Base):
 class LargeItemStat(Base):
     __tablename__ = "largeitem_stats"
     item_id = Column(String(255), ForeignKey("items.id"), primary_key=True, index=True)
-    total_quantity = Column(Integer, nullable=True)
-    # unified threshold names (integers for large items)
+    total_quantity = Column(Integer, nullable=False)
     high_threshold = Column(Integer, nullable=False)
     low_threshold = Column(Integer, nullable=False)
-    stock_status = Column(Enum(StockStatus), nullable=True, index=True)
+    stock_status = Column(Enum(StockStatus), nullable=False, index=True)
  
     item = relationship("Item", back_populates="largeitem_stat")
 
@@ -118,8 +117,8 @@ class ItemStatHistory(Base):
     item_type = Column(Enum(ItemType), nullable=False)
 
     # Snapshotted stat values
-    total_quantity = Column(Float, nullable=True)
-    total_capacity = Column(Float, nullable=True)
+    total_quantity = Column(Integer, nullable=True)
+    total_capacity = Column(Integer, nullable=True)
     total_weight = Column(Float, nullable=True)
     stock_status = Column(Enum(StockStatus), nullable=True, index=True)
 

@@ -37,7 +37,7 @@ class Transaction(Base):
     current_weight = Column(Float, nullable=True)
     weight_change = Column(Float, nullable=True) 
     
-    user_name = Column(String(255), nullable=True, index=True)
+    user_name = Column(String(255), nullable=False, index=True)
     
     def __repr__(self):
         return f"<Transaction(id='{self.id}', type='{self.transaction_type.value}', item='{self.item_name}')>"
