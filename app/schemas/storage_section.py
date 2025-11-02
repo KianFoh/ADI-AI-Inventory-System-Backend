@@ -1,4 +1,4 @@
-from pydantic import BaseModel, field_validator, computed_field
+from pydantic import BaseModel, field_validator
 from typing import Optional, List
 import math
 from app.models.storage_section import SectionColor

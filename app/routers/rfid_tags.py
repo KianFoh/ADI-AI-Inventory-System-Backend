@@ -4,7 +4,6 @@ from typing import List, Optional
 from app.database import get_db
 from app.crud import rfid_tag as rfid_crud
 from app.schemas.rfid_tag import (
-    RFIDTagCreate, 
     RFIDTagUpdate, 
     RFIDTagResponse,
     PaginatedRFIDTagsResponse

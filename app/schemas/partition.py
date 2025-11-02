@@ -4,7 +4,6 @@ import math
 from app.models.partition import PartitionStatus
 from app.validators import (
     non_empty_string_validator,
-    bounded_int_validator,
     bounded_int_optional_validator
 )
 

@@ -1,12 +1,10 @@
-from operator import and_
-from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse
-from sqlalchemy import distinct, func
 from sqlalchemy.orm import Session
 from typing import Any, Dict, List, Optional
 from app.database import get_db
 from app.crud import item as item_crud
-from app.models.item import ItemStatHistory, ItemType, MeasureMethod, StockStatus
+from app.models.item import ItemType, MeasureMethod
 from app.schemas.item import (
     ItemCreate, 
     ItemUpdate, 
@@ -15,37 +13,8 @@ from app.schemas.item import (
     PaginatedItemsResponse
 )
 from app.utils.image import get_image_full_path
-import re
-from datetime import datetime, date, time, timedelta
-import calendar
 import logging
 import traceback
-
-def _period_bounds_for(granularity: str, start_dt: date, idx: int):
-    """
-    Return (period_start_datetime, period_end_datetime, period_label_date) for the idx-th period
-    starting at start_dt. Supports 'day', 'month', 'year'.
-    """
-    if granularity == "day":
-        cur = start_dt + timedelta(days=idx)
-        start_dt_time = datetime.combine(cur, time.min)
-        end_dt_time = datetime.combine(cur, time.max)
-        label = cur
-    elif granularity == "month":
-        y = start_dt.year + (start_dt.month - 1 + idx) // 12
-        m = (start_dt.month - 1 + idx) % 12 + 1
-        label = date(y, m, 1)
-        start_dt_time = datetime.combine(label, time.min)
-        last_day = calendar.monthrange(y, m)[1]
-        end_dt_time = datetime.combine(date(y, m, last_day), time.max)
-    elif granularity == "year":
-        y = start_dt.year + idx
-        label = date(y, 1, 1)
-        start_dt_time = datetime.combine(label, time.min)
-        end_dt_time = datetime.combine(date(y, 12, 31), time.max)
-    else:
-        raise ValueError("unsupported granularity")
-    return start_dt_time, end_dt_time, label
 
 router = APIRouter(
     prefix="/items",

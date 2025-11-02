@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from sqlalchemy import func, or_
+from sqlalchemy import or_
 from app.models.user import User
 from app.schemas.user import UserCreate, UserUpdate
 from typing import List, Optional, Tuple

@@ -1,7 +1,7 @@
 from pydantic import BaseModel, field_validator
 from typing import List, Optional
 import math
-from app.validators import non_empty_string_validator, boolean_validator
+from app.validators import boolean_validator
 
 class RFIDTagBase(BaseModel):
     id: str

@@ -2,7 +2,6 @@ from sqlalchemy import Column, String, Integer, ForeignKey, Enum, event, text
 from sqlalchemy.orm import relationship
 from app.database import Base
 import enum
-import uuid
 
 class PartitionStatus(enum.Enum):
     AVAILABLE = "available"

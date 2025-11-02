@@ -1,6 +1,5 @@
 from sqlalchemy.orm import Session
 from sqlalchemy import func
-from sqlalchemy.sql import expression
 from sqlalchemy import BigInteger
 from app.models.item import Item, ItemType
 from app.models.storage_section import StorageSection

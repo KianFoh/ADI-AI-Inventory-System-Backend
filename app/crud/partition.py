@@ -3,7 +3,6 @@ from sqlalchemy import or_
 from app.models.partition import Partition, PartitionStatus
 from app.models.item import Item, ItemType, PartitionStat
 from app.models.storage_section import StorageSection
-from app.models.rfid_tag import RFIDTag
 from app.schemas.partition import PartitionCreate, PartitionUpdate
 from app.crud.general import (
     create_entity_with_rfid_and_storage, 
