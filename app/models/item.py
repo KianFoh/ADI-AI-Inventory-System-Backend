@@ -120,7 +120,7 @@ class ItemStatHistory(Base):
     total_quantity = Column(Integer, nullable=True)
     total_capacity = Column(Integer, nullable=True)
     total_weight = Column(Float, nullable=True)
-    stock_status = Column(Enum(StockStatus), nullable=True, index=True)
+    stock_status = Column(Enum(StockStatus), nullable=False, index=True)
 
     # Optional metadata
     change_source = Column(String(255), nullable=True)

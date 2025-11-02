@@ -470,21 +470,24 @@ def update_item(db: Session, item_id: str, item: Union[ItemUpdate, dict]) -> Opt
     effective_type = update_data.get("item_type") or db_item.item_type
     _ensure_thresholds_valid(update_data, effective_item_type=effective_type)
 
-    # extract stat-specific inputs
+    # extract stat-specific inputs (track whether provided so explicit null clears)
+    partition_capacity_provided = "partition_capacity" in update_data
     partition_capacity_val = update_data.pop("partition_capacity", None)
     partition_high = update_data.pop("partition_high", None)
     partition_low = update_data.pop("partition_low", None)
-    partition_stock_status = update_data.pop("partition_stock_status", None)
 
     large_high = update_data.pop("large_high", None)
     large_low = update_data.pop("large_low", None)
-    large_stock_status = update_data.pop("large_stock_status", None)
 
+    # detect whether caller provided the container fields (so explicit None clears them)
+    container_item_weight_provided = "container_item_weight" in update_data
     container_item_weight_val = update_data.pop("container_item_weight", None)
+    container_weight_provided = "container_weight" in update_data
     container_weight_val = update_data.pop("container_weight", None)
+    container_high_provided = "container_high" in update_data
     container_high = update_data.pop("container_high", None)
+    container_low_provided = "container_low" in update_data
     container_low = update_data.pop("container_low", None)
-    container_stock_status = update_data.pop("container_stock_status", None)
 
     # normalize enums present
     if "measure_method" in update_data and isinstance(update_data["measure_method"], str):
@@ -520,71 +523,165 @@ def update_item(db: Session, item_id: str, item: Union[ItemUpdate, dict]) -> Opt
             db.query(LargeItemStat).filter(LargeItemStat.item_id == db_item.id).delete(synchronize_session=False)
         elif original_type == ItemType.CONTAINER:
             db.query(ContainerStat).filter(ContainerStat.item_id == db_item.id).delete(synchronize_session=False)
+        # delete all previous stat history for this item to keep history consistent with new type
+        db.query(ItemStatHistory).filter(ItemStatHistory.item_id == db_item.id).delete(synchronize_session=False)
         # commit deletion together with the item changes below
+        
     db.commit()
     db.refresh(db_item)
+
+    # flag to avoid double-updating status later
+    container_status_updated = False
 
     # upsert per-type stat rows
     if db_item.item_type == ItemType.PARTITION:
         ps = db.query(PartitionStat).filter(PartitionStat.item_id == db_item.id).first()
         if not ps:
-            ps = PartitionStat(item_id=db_item.id, total_quantity=0)
+            ps = PartitionStat(item_id=db_item.id, total_quantity=0, total_capacity=0)
             db.add(ps)
-        if partition_capacity_val is not None:
             ps.partition_capacity = partition_capacity_val
-        if partition_high is not None:
             ps.high_threshold = partition_high
-        if partition_low is not None:
             ps.low_threshold = partition_low
-        if partition_stock_status is not None:
-            ps.stock_status = StockStatus(partition_stock_status)
-        db.commit()
-        db.refresh(ps)
+            ps.stock_status = StockStatus.LOW
+            db.commit()
+            db.refresh(ps)
+            # record an initial snapshot for the new/created partition stat (non-blocking)
+            try:
+                _maybe_record_stat_history(db, ps, ["total_quantity", "total_capacity", "stock_status"], change_source="Item Type Change")
+                db.commit()
+            except Exception:
+                db.rollback()
+        else:
+            # apply provided updates to existing partition stat
+            changes = {}
+            if partition_capacity_provided and ps.partition_capacity != partition_capacity_val:
+                changes["partition_capacity"] = partition_capacity_val
+            if partition_high is not None and ps.high_threshold != partition_high:
+                changes["high_threshold"] = partition_high
+            if partition_low is not None and ps.low_threshold != partition_low:
+                changes["low_threshold"] = partition_low
+            if changes:
+                # _persist_if_changed will set, record history and commit
+                _persist_if_changed(db, ps, changes, change_source="Item Update")
 
     if db_item.item_type == ItemType.LARGE_ITEM:
         ls = db.query(LargeItemStat).filter(LargeItemStat.item_id == db_item.id).first()
         if not ls:
             ls = LargeItemStat(item_id=db_item.id, total_quantity=0)
             db.add(ls)
-        if large_high is not None:
             ls.high_threshold = large_high
-        if large_low is not None:
             ls.low_threshold = large_low
-        if large_stock_status is not None:
-            ls.stock_status = StockStatus(large_stock_status)
-        db.commit()
-        db.refresh(ls)
+            ls.stock_status = StockStatus.LOW
+            db.commit()
+            db.refresh(ls)
+            # record an initial snapshot for the new/created large item stat (non-blocking)
+            try:
+                _maybe_record_stat_history(db, ls, ["total_quantity", "stock_status"], change_source="Item Type Change")
+                db.commit()
+            except Exception:
+                db.rollback()
+        else:
+            # apply provided updates to existing large item stat
+            changes = {}
+            if large_high is not None and ls.high_threshold != large_high:
+                changes["high_threshold"] = large_high
+            if large_low is not None and ls.low_threshold != large_low:
+                changes["low_threshold"] = large_low
+            if changes:
+                # _persist_if_changed will set, record history and commit
+                _persist_if_changed(db, ls, changes, change_source="Item Update")
 
     if db_item.item_type == ItemType.CONTAINER:
         cs = db.query(ContainerStat).filter(ContainerStat.item_id == db_item.id).first()
         if not cs:
-            cs = ContainerStat(item_id=db_item.id, total_weight=0.0)
+            # create new container stat (start LOW)
+            init_total_qty = 0 if container_item_weight_val is not None else None
+            cs = ContainerStat(
+                item_id=db_item.id,
+                container_item_weight=container_item_weight_val if container_item_weight_val is not None else None,
+                container_weight=container_weight_val if container_weight_val is not None else None,
+                total_weight=0.0,
+                total_quantity=init_total_qty,
+                high_threshold=container_high if container_high is not None else None,
+                low_threshold=container_low if container_low is not None else None,
+                stock_status=StockStatus.LOW,
+            )
             db.add(cs)
+            db.commit()
+            db.refresh(cs)
+            # explicit initial snapshot so "Item Type Change" is recorded
+            try:
+                _maybe_record_stat_history(db, cs, ["total_weight", "total_quantity", "stock_status"], change_source="Item Type Change")
+                db.commit()
+            except Exception:
+                db.rollback()
+            try:
+                _update_container_status(db, db_item.id, change_source="Item Type Change")
+            except Exception:
+                db.rollback()
+            container_status_updated = True
+        else:
+            # existing stat: detect transitions both ways
+            transitioning_to_weight = (container_item_weight_provided and container_item_weight_val is not None and cs.container_item_weight is None)
+            transitioning_to_no_weight = (container_item_weight_provided and container_item_weight_val is None and cs.container_item_weight is not None)
 
-        if "container_item_weight_val" in locals():
-            cs.container_item_weight = container_item_weight_val
+            # apply provided updates (including explicit None)
+            changed = False
+            if container_item_weight_provided and cs.container_item_weight != container_item_weight_val:
+                cs.container_item_weight = container_item_weight_val
+                changed = True
+            if container_weight_provided and cs.container_weight != container_weight_val:
+                cs.container_weight = container_weight_val
+                changed = True
+            if container_high_provided and cs.high_threshold != container_high:
+                cs.high_threshold = container_high
+                changed = True
+            if container_low_provided and cs.low_threshold != container_low:
+                cs.low_threshold = container_low
+                changed = True
+            if changed:
+                db.add(cs)
+                db.commit()
+                db.refresh(cs)
 
-        if container_weight_val is not None:
-            cs.container_weight = container_weight_val
+            # If we just started/stopped tracking per-item weight, previous history may be invalid.
+            if transitioning_to_weight or transitioning_to_no_weight:
+                try:
+                    db.query(ItemStatHistory).filter(ItemStatHistory.item_id == db_item.id).delete(synchronize_session=False)
+                    db.commit()
+                except Exception:
+                    db.rollback()
 
-        if container_high is not None:
-            cs.high_threshold = container_high
+            # choose an appropriate change_source: transitions take priority over threshold/weight updates
+            if transitioning_to_weight or transitioning_to_no_weight:
+                # explicit track-mode change snapshot
+                change_source = "Container Track Mode Change"
+            elif container_high_provided or container_low_provided:
+                change_source = "Item Threshold Change"
+            elif container_item_weight_provided:
+                change_source = "Container item weight Update"
+            elif container_weight_provided:
+                change_source = "Item Update"
+            else:
+                change_source = "Item Update"
 
-        if container_low is not None:
-            cs.low_threshold = container_low
-
-        if container_stock_status is not None:
-            cs.stock_status = StockStatus(container_stock_status)
-
-        db.commit()
-        db.refresh(cs)
+            # recompute totals/status and record snapshot using the selected change_source
+            try:
+                _update_container_status(db, db_item.id, change_source)
+                # ensure explicit snapshot immediately after changing tracking mode
+                if transitioning_to_weight or transitioning_to_no_weight:
+                    db.refresh(cs)
+                    db.commit()
+            except Exception:
+                db.rollback()
+            container_status_updated = True
 
     # recompute statuses
     if db_item.item_type == ItemType.PARTITION:
         _update_partition_status(db, db_item.id, "Item Threshold Change")    
     if db_item.item_type == ItemType.LARGE_ITEM:
         _update_largeitem_status(db, db_item.id, "Item Threshold Change")
-    if db_item.item_type == ItemType.CONTAINER:
+    if db_item.item_type == ItemType.CONTAINER and not container_status_updated:
         _update_container_status(db, db_item.id, "Item Threshold Change")
 
     return db_item
