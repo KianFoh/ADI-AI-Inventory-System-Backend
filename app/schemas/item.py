@@ -264,13 +264,6 @@ class ItemResponse(ItemBase):
 
     model_config = {"from_attributes": True}
 
-    @model_validator(mode="after")
-    def fix_weights_for_non_container(self):
-        if self.item_type != ItemType.CONTAINER:
-            self.container_stat = None
-        return self
-
-
 class ItemStatsResponse(ItemResponse):
     total_quantity: Optional[int] = None
     total_capacity: Optional[int] = None
