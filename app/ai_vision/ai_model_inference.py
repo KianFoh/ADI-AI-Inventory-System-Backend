@@ -14,7 +14,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Always resolve relative to this file’s folder
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-MODEL_PATH = os.path.join(BASE_DIR, "rcnn_model_v2.pth")
+MODEL_PATH = os.path.join(BASE_DIR, "rcnn_model_v3.pth")
 
 if not os.path.exists(MODEL_PATH):
     logging.error(f"Model file not found: {MODEL_PATH}")
