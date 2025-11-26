@@ -1,9 +1,10 @@
 from sqlalchemy.orm import Session
-from sqlalchemy import desc, asc, and_, func
+from sqlalchemy import desc, asc, and_, func, or_
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone, timedelta
 from app.models.transaction import Transaction, TransactionType, ItemType
 from app.schemas.transaction import TransactionCreate, TransactionFilter
+from app.crud.general import order_by_numeric_suffix
 
 def create_transaction(db: Session, transaction: TransactionCreate) -> Transaction:
     """Create a new transaction"""
@@ -35,7 +36,11 @@ def get_transaction(db: Session, transaction_id: str) -> Optional[Transaction]:
 
 def get_transactions(db: Session, skip: int = 0, limit: int = 100, sort_by: str = "transaction_date", sort_order: str = "desc") -> List[Transaction]:
     query = db.query(Transaction)
-    query = query.order_by(desc(getattr(Transaction, sort_by)) if sort_order.lower() == "desc" else asc(getattr(Transaction, sort_by)))
+    if sort_by == "id":
+        query = order_by_numeric_suffix(query, Transaction.id, asc=(sort_order.lower() != "desc"))
+    else:
+        attr = getattr(Transaction, sort_by, Transaction.transaction_date)
+        query = query.order_by(desc(attr) if sort_order.lower() == "desc" else asc(attr))
     return query.offset(skip).limit(limit).all()
 
 def get_transactions_filtered(db: Session, filters: TransactionFilter, skip: int = 0, limit: int = 100, sort_by: str = "transaction_date", sort_order: str = "desc") -> tuple[List[Transaction], int]:
@@ -56,12 +61,27 @@ def get_transactions_filtered(db: Session, filters: TransactionFilter, skip: int
         conditions.append(Transaction.transaction_date >= filters.start_date)
     if filters.end_date:
         conditions.append(Transaction.transaction_date <= filters.end_date)
+    # keyword search across multiple fields
+    if getattr(filters, "search", None):
+        term = f"%{filters.search}%"
+        conditions.append(or_(
+            Transaction.item_id.ilike(term),
+            Transaction.item_name.ilike(term),
+            Transaction.partition_id.ilike(term),
+            Transaction.large_item_id.ilike(term),
+            Transaction.container_id.ilike(term),
+            Transaction.user_name.ilike(term)
+        ))
     
     if conditions:
         query = query.filter(and_(*conditions))
     
     total_count = query.count()
-    query = query.order_by(desc(getattr(Transaction, sort_by)) if sort_order.lower() == "desc" else asc(getattr(Transaction, sort_by)))
+    if sort_by == "id":
+        query = order_by_numeric_suffix(query, Transaction.id, asc=(sort_order.lower() != "desc"))
+    else:
+        attr = getattr(Transaction, sort_by, Transaction.transaction_date)
+        query = query.order_by(desc(attr) if sort_order.lower() == "desc" else asc(attr))
     transactions = query.offset(skip).limit(limit).all()
     
     return transactions, total_count
@@ -190,3 +210,53 @@ def delete_transaction(db: Session, transaction_id: str) -> bool:
         db.commit()
         return True
     return False
+
+def get_transactions_for_export(
+    db: Session,
+    filters: Optional[TransactionFilter] = None,
+    sort_by: str = "transaction_date",
+    sort_order: str = "desc",
+    limit: int = 10_000_000,
+) -> List[Dict[str, Any]]:
+    """
+    Return a list of plain dicts ready for CSV export using the same filtering logic
+    as get_transactions / get_transactions_filtered.
+    """
+    if filters and any([
+        getattr(filters, "search", None),
+        getattr(filters, "start_date", None),
+        getattr(filters, "end_date", None),
+        getattr(filters, "transaction_types", None),
+        getattr(filters, "item_types", None),
+    ]):
+        txns, _ = get_transactions_filtered(db, filters=filters, skip=0, limit=limit, sort_by=sort_by, sort_order=sort_order)
+    else:
+        txns = get_transactions(db, skip=0, limit=limit, sort_by=sort_by, sort_order=sort_order)
+
+    rows: List[Dict[str, Any]] = []
+    for t in txns:
+        # map ORM -> simple dict with fields used in CSV export
+        rows.append({
+            "id": getattr(t, "id", ""),
+            "transaction_date": getattr(t, "transaction_date", ""),
+            "transaction_type": getattr(t, "transaction_type", ""),
+            "item_type": getattr(t, "item_type", ""),
+            "item_id": getattr(t, "item_id", ""),
+            "item_name": getattr(t, "item_name", ""),
+            "unit_id": getattr(t, "unit_id", "") if hasattr(t, "unit_id") else (
+                getattr(t, "partition_id", None) or getattr(t, "large_item_id", None) or getattr(t, "container_id", None) or ""
+            ),
+            "partition_id": getattr(t, "partition_id", ""),
+            "large_item_id": getattr(t, "large_item_id", ""),
+            "container_id": getattr(t, "container_id", ""),
+            "storage_section_id": getattr(t, "storage_section_id", ""),
+            "user_name": getattr(t, "user_name", ""),
+            "previous_quantity": getattr(t, "previous_quantity", ""),
+            "current_quantity": getattr(t, "current_quantity", ""),
+            "quantity_change": getattr(t, "quantity_change", ""),
+            "previous_weight": getattr(t, "previous_weight", ""),
+            "current_weight": getattr(t, "current_weight", ""),
+            "weight_change": getattr(t, "weight_change", ""),
+            "notes": getattr(t, "notes", "") if hasattr(t, "notes") else ""
+        })
+    return rows

@@ -1,12 +1,7 @@
-from sqlalchemy import Column, String, Integer, Enum as SQLEnum
+from sqlalchemy import String,Enum as SQLEnum
 from sqlalchemy.orm import relationship, Mapped, mapped_column
-from typing import List, TYPE_CHECKING
 from app.database import Base
 from enum import Enum
-
-if TYPE_CHECKING:
-    from app.models.partition import Partition
-    from app.models.large_item import LargeItem
 
 class SectionColor(Enum):
     RED = "red"

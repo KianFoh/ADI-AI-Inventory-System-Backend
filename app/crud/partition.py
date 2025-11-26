@@ -3,7 +3,6 @@ from sqlalchemy import or_
 from app.models.partition import Partition, PartitionStatus
 from app.models.item import Item, ItemType, PartitionStat
 from app.models.storage_section import StorageSection
-from app.models.rfid_tag import RFIDTag
 from app.schemas.partition import PartitionCreate, PartitionUpdate
 from app.crud.general import (
     create_entity_with_rfid_and_storage, 
@@ -13,6 +12,7 @@ from app.crud.general import (
 from typing import List, Optional, Tuple
 # import updater
 from app.crud.item import _update_partition_status
+from app.crud.general import order_by_numeric_suffix
 
 def get_partition(db: Session, partition_id: str) -> Optional[Partition]:
     """Get partition by ID"""
@@ -41,7 +41,8 @@ def get_partitions(
     if status:
         query = query.filter(Partition.status == status)
     
-    query = query.order_by(Partition.id)
+    # order by numeric suffix of id (Postgres). Falls back to string id for deterministic ordering.
+    query = order_by_numeric_suffix(query, Partition.id, asc=True)
     total_count = query.count()
     
     skip = (page - 1) * page_size
@@ -87,7 +88,7 @@ def create_partition(db: Session, partition: PartitionCreate) -> Partition:
     # ensure stats (including stock_status) are recomputed & persisted
     try:
         db.refresh(created)
-        _update_partition_status(db, created.item_id)
+        _update_partition_status(db, created.item_id, "Register Partition")
         # refresh the parent Item so response readers see updated partition_stat
         item = db.query(Item).filter(Item.id == created.item_id).first()
         if item:
@@ -130,7 +131,7 @@ def update_partition(db: Session, partition_id: str, partition: PartitionUpdate)
     if updated:
         try:
             db.refresh(updated)
-            _update_partition_status(db, updated.item_id)
+            _update_partition_status(db, updated.item_id, "Return Partition")
             item = db.query(Item).filter(Item.id == updated.item_id).first()
             if item:
                 db.refresh(item)
@@ -145,7 +146,7 @@ def delete_partition(db: Session, partition_id: str) -> Optional[Partition]:
     deleted = delete_entity_with_rfid_and_storage(db, Partition, partition_id)
     if deleted and item_id:
         try:
-            _update_partition_status(db, item_id)
+            _update_partition_status(db, item_id, "Partition Consumed")
             item = db.query(Item).filter(Item.id == item_id).first()
             if item:
                 db.refresh(item)
@@ -155,11 +156,15 @@ def delete_partition(db: Session, partition_id: str) -> Optional[Partition]:
 
 def get_partitions_by_item(db: Session, item_id: str) -> List[Partition]:
     """Get partitions by item ID"""
-    return db.query(Partition).filter(Partition.item_id == item_id).order_by(Partition.id).all()
+    query = db.query(Partition).filter(Partition.item_id == item_id)
+    query = order_by_numeric_suffix(query, Partition.id)
+    return query.all()
 
 def get_partitions_by_storage_section(db: Session, storage_section_id: str) -> List[Partition]:
     """Get partitions by storage section ID"""
-    return db.query(Partition).filter(Partition.storage_section_id == storage_section_id).order_by(Partition.id).all()
+    query = db.query(Partition).filter(Partition.storage_section_id == storage_section_id)
+    query = order_by_numeric_suffix(query, Partition.id)
+    return query.all()
 
 def get_partition_count(db: Session) -> int:
     """Get total partition count"""

@@ -23,21 +23,18 @@ class LargeItem(Base):
     def __repr__(self):
         return f"<LargeItem(id='{self.id}', item_id='{self.item_id}', status='{self.status.value}')>"
 
-# Event listener to generate sequential LargeItem IDs
+# Event listener to generate sequential LargeItem IDs (sequence-backed, atomic)
 @event.listens_for(LargeItem, "before_insert")
 def generate_largeitem_id(mapper, connection, target):
     prefix = "L"
+    seq_name = "large_items_seq"
 
-    # Query the max existing number
-    result = connection.execute(
-        text(f"SELECT id FROM large_items WHERE id LIKE '{prefix}%' ORDER BY id DESC LIMIT 1")
-    ).fetchone()
+    # create sequence if it doesn't exist (prefer to provision via migration in production)
+    try:
+        connection.execute(text(f"CREATE SEQUENCE IF NOT EXISTS {seq_name} START 1"))
+    except Exception:
+        pass
 
-    if result is None:
-        next_number = 1
-    else:
-        last_id = result[0]
-        last_number = int(last_id[1:])
-        next_number = last_number + 1
-
-    target.id = f"{prefix}{next_number}"
+    # atomically get the next value
+    next_val = connection.execute(text(f"SELECT nextval('{seq_name}')")).scalar()
+    target.id = f"{prefix}{int(next_val)}"

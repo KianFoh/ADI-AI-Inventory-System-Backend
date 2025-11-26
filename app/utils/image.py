@@ -2,7 +2,7 @@ import os
 import base64
 from typing import Optional
 from pathlib import Path
-from PIL import Image
+from PIL import Image, ImageOps
 import io
 
 # Base directory for the project
@@ -20,7 +20,7 @@ def ensure_images_directory():
 
 def save_image_from_base64(item_id: str, base64_data: str) -> str:
     """
-    Save base64 image data to file, convert to JPEG and resize to 640x480.
+    Save base64 image data to file, convert to JPEG and resize to 320x240.
     Returns relative path like "resource/images/{item_id}.jpg".
     """
     ensure_images_directory()
@@ -46,11 +46,34 @@ def save_image_from_base64(item_id: str, base64_data: str) -> str:
         # Open image with Pillow
         try:
             with Image.open(io.BytesIO(image_bytes)) as img:
-                # Force convert to RGB for JPEG and handle palette/transparency
-                img = img.convert("RGB")
+                # Fix orientation from EXIF, convert to RGB for JPEG
+                img = ImageOps.exif_transpose(img).convert("RGB")
 
-                # Resize to exact 640x480
-                target_size = (640, 480)
+                # Target size (keeps existing value)
+                target_size = (320, 240)
+
+                # Center-crop to target aspect ratio to avoid distortion
+                w, h = img.size
+                target_w, target_h = target_size
+                target_ratio = target_w / target_h
+                current_ratio = w / h
+
+                if current_ratio > target_ratio:
+                    # Image is too wide -> crop width
+                    new_w = int(h * target_ratio)
+                    left = (w - new_w) // 2
+                    right = left + new_w
+                    top = 0
+                    bottom = h
+                else:
+                    # Image is too tall -> crop height
+                    new_h = int(w / target_ratio)
+                    top = (h - new_h) // 2
+                    bottom = top + new_h
+                    left = 0
+                    right = w
+
+                img = img.crop((left, top, right, bottom))
                 img = img.resize(target_size, Image.LANCZOS)
 
                 # Prepare filename and path (always .jpg)

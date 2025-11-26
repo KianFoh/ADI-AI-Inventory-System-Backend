@@ -64,7 +64,7 @@ def get_user(employeeId: str, db: Session = Depends(get_db)):
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"field": "employeeId", "message": "User not found"}
+            detail=[{"field": "employeeId", "message": "User not found"}]
         )
     return UserResponse.model_validate(user)
 
@@ -74,12 +74,12 @@ def create_user(user: UserCreate, db: Session = Depends(get_db)):
     if user_crud.get_user(db, employeeid=user.employeeId):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"field": "employeeId", "message": "User with this employee ID already exists"}
+            detail=[{"field": "employeeId", "message": "User with this employee ID already exists"}]
         )
     if user_crud.get_user_by_email(db, email=user.email):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"field": "email", "message": "User with this email already exists"}
+            detail=[{"field": "email", "message": "User with this email already exists"}]
         )
     
     created_user = user_crud.create_user(db=db, user=user)
@@ -93,7 +93,7 @@ def update_user(employeeId: str, user: UserUpdate, db: Session = Depends(get_db)
         if user_crud.get_user(db, employeeid=user.employeeId):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail={"field": "employeeId", "message": "User with this employee ID already exists"}
+                detail=[{"field": "employeeId", "message": "User with this employee ID already exists"}]
             )
     # Check if changing email and new one already exists
     if user.email:
@@ -101,13 +101,13 @@ def update_user(employeeId: str, user: UserUpdate, db: Session = Depends(get_db)
         if existing_user and existing_user.employeeId != employeeId:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail={"field": "email", "message": "User with this email already exists"}
+                detail=[{"field": "email", "message": "User with this email already exists"}]
             )
     updated_user = user_crud.update_user(db, employeeid=employeeId, user=user)
     if not updated_user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"field": "employeeId", "message": "User not found"}
+            detail=[{"field": "employeeId", "message": "User not found"}]
         )
     return UserResponse.model_validate(updated_user)
 
@@ -118,7 +118,7 @@ def delete_user(employeeId: str, db: Session = Depends(get_db)):
     if not deleted_user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"field": "employeeId", "message": "User not found"}
+            detail=[{"field": "employeeId", "message": "User not found"}]
         )
     return UserResponse.model_validate(deleted_user)
 

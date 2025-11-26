@@ -1,12 +1,28 @@
 from sqlalchemy.orm import Session
-from sqlalchemy import func, or_, and_
-from app.models.item import Item, ItemType, MeasureMethod, PartitionStat, LargeItemStat, ContainerStat, StockStatus
+from sqlalchemy import func, and_, distinct, or_
+from app.models.item import (
+    Item,
+    ItemType,
+    MeasureMethod,
+    PartitionStat,
+    LargeItemStat,
+    ContainerStat,
+    StockStatus,
+    ItemStatHistory,
+)
+from app.crud.general import order_by_numeric_suffix
 from app.models.partition import Partition
 from app.models.large_item import LargeItem
 from app.models.container import Container
 from app.schemas.item import ItemCreate, ItemUpdate, ItemResponse, ItemStatsResponse
 from app.utils.image import save_image_from_base64, delete_image, get_image_url
 from typing import List, Optional, Tuple, Dict, Union
+from datetime import datetime, date, time, timedelta
+import calendar
+from typing import List, Dict, Any, Optional
+from sqlalchemy import func
+from sqlalchemy.orm import Session
+from app.models.item import ItemStatHistory, StockStatus
 
 # Helper utilities
 def _normalize_input_to_dict(obj: Union[ItemCreate, ItemUpdate, dict]) -> dict:
@@ -33,22 +49,86 @@ def _determine_stock_status(value: float, low_threshold, high_threshold) -> Opti
         return StockStatus.LOW
     return StockStatus.MEDIUM
 
-def _persist_if_changed(db: Session, obj, changes: Dict) -> None:
+def _persist_if_changed(db: Session, obj, changes: Dict, change_source: Optional[str] = None) -> None:
     changed = False
+    changed_keys = []
     for k, v in changes.items():
         if getattr(obj, k) != v:
             setattr(obj, k, v)
             changed = True
+            changed_keys.append(k)
     if changed:
         db.add(obj)
+        # record history for stat rows if relevant fields changed
+        try:
+            _maybe_record_stat_history(db, obj, changed_keys, change_source)
+        except Exception:
+            # history recording must not block main update; swallow and continue
+            db.rollback()
+            # re-add obj after rollback so commit below can proceed
+            db.add(obj)
         db.commit()
         db.refresh(obj)
+
+
+def _maybe_record_stat_history(db: Session, stat_obj, changed_keys: list, change_source: Optional[str] = None) -> None:
+    """
+    Create ItemStatHistory snapshot when monitored stat fields changed.
+    Only records for PartitionStat, LargeItemStat, ContainerStat and only when
+    relevant fields changed.
+    """
+    # Determine monitored fields per stat type
+    monitored = None
+    payload = {}
+    if isinstance(stat_obj, PartitionStat):
+        monitored = {"total_quantity", "total_capacity", "stock_status"}
+        if not monitored.intersection(changed_keys):
+            return
+        payload["total_quantity"] = getattr(stat_obj, "total_quantity", None)
+        payload["total_capacity"] = getattr(stat_obj, "total_capacity", None)
+        payload["total_weight"] = None
+        payload["stock_status"] = getattr(stat_obj, "stock_status", None)
+    elif isinstance(stat_obj, LargeItemStat):
+        monitored = {"total_quantity", "stock_status"}
+        if not monitored.intersection(changed_keys):
+            return
+        payload["total_quantity"] = getattr(stat_obj, "total_quantity", None)
+        payload["total_capacity"] = None
+        payload["total_weight"] = None
+        payload["stock_status"] = getattr(stat_obj, "stock_status", None)
+    elif isinstance(stat_obj, ContainerStat):
+        monitored = {"total_weight", "total_quantity", "stock_status"}
+        if not monitored.intersection(changed_keys):
+            return
+        payload["total_quantity"] = getattr(stat_obj, "total_quantity", None)
+        payload["total_capacity"] = None
+        payload["total_weight"] = getattr(stat_obj, "total_weight", None)
+        payload["stock_status"] = getattr(stat_obj, "stock_status", None)
+    else:
+        return
+
+    # Resolve item info
+    item_row = db.query(Item).filter(Item.id == getattr(stat_obj, "item_id")).first()
+    if not item_row:
+        return
+
+    hist = ItemStatHistory(
+        item_id=item_row.id,
+        item_name=item_row.name,
+        item_type=item_row.item_type,
+        total_quantity=payload.get("total_quantity"),
+        total_capacity=payload.get("total_capacity"),
+        total_weight=payload.get("total_weight"),
+        stock_status=payload.get("stock_status"),
+        change_source=change_source,
+    )
+    db.add(hist)
 
 def _stat_status_value(stat_row):
     return stat_row.stock_status.value if getattr(stat_row, "stock_status", None) else None
 
 # -- status updaters --
-def _update_partition_status(db: Session, item_id: str) -> None:
+def _update_partition_status(db: Session, item_id: str, change_source: Optional[str] = None) -> None:
     ps = db.query(PartitionStat).filter(PartitionStat.item_id == item_id).first()
     if not ps:
         return
@@ -58,17 +138,17 @@ def _update_partition_status(db: Session, item_id: str) -> None:
     total_capacity = int(partition_count) * per_capacity
     percent = (total_quantity / total_capacity) * 100.0 if total_capacity > 0 else 0.0
     new_status = _determine_stock_status(percent, ps.low_threshold, ps.high_threshold)
-    _persist_if_changed(db, ps, {"total_quantity": int(total_quantity), "total_capacity": int(total_capacity), "stock_status": new_status})
+    _persist_if_changed(db, ps, {"total_quantity": int(total_quantity), "total_capacity": int(total_capacity), "stock_status": new_status}, change_source=change_source)
 
-def _update_largeitem_status(db: Session, item_id: str) -> None:
+def _update_largeitem_status(db: Session, item_id: str, change_source: Optional[str] = None) -> None:
     ls = db.query(LargeItemStat).filter(LargeItemStat.item_id == item_id).first()
     if not ls:
         return
     total_qty = db.query(func.count(LargeItem.id)).filter(LargeItem.item_id == item_id).scalar() or 0
     new_status = _determine_stock_status(total_qty, ls.low_threshold, ls.high_threshold)
-    _persist_if_changed(db, ls, {"total_quantity": int(total_qty), "stock_status": new_status})
+    _persist_if_changed(db, ls, {"total_quantity": int(total_qty), "stock_status": new_status}, change_source=change_source)
 
-def _update_container_status(db: Session, item_id: str) -> None:
+def _update_container_status(db: Session, item_id: str, change_source: Optional[str] = None) -> None:
     cs = db.query(ContainerStat).filter(ContainerStat.item_id == item_id).first()
     if not cs:
         return
@@ -76,13 +156,13 @@ def _update_container_status(db: Session, item_id: str) -> None:
     computed_total_quantity = None
     if cs.container_item_weight is not None and cs.container_item_weight > 0:
         try:
-            computed_total_quantity = int(total_weight / float(cs.container_item_weight))
+            computed_total_quantity = int(round(total_weight / float(cs.container_item_weight)))
         except Exception:
             computed_total_quantity = 0
     new_status = _determine_stock_status(total_weight, cs.low_threshold, cs.high_threshold)
     changes = {"total_weight": float(total_weight), "stock_status": new_status}
     changes["total_quantity"] = computed_total_quantity if cs.container_item_weight is not None else None
-    _persist_if_changed(db, cs, changes)
+    _persist_if_changed(db, cs, changes, change_source=change_source)
 
 # -- stats readers --
 def get_partition_stats(db: Session, item_id: str) -> Dict[str, int]:
@@ -116,12 +196,6 @@ def _to_dict_safe(pydantic_obj):
             return pydantic_obj
 
 def create_item_response(db: Session, item: Item, base_url: str = "") -> ItemResponse:
-    if item.item_type == ItemType.PARTITION:
-        _update_partition_status(db, item.id)
-    elif item.item_type == ItemType.LARGE_ITEM:
-        _update_largeitem_status(db, item.id)
-    elif item.item_type == ItemType.CONTAINER:
-        _update_container_status(db, item.id)
 
     try:
         db.refresh(item)
@@ -168,7 +242,9 @@ def create_item_response(db: Session, item: Item, base_url: str = "") -> ItemRes
         }
 
     if item.item_type == ItemType.PARTITION:
-        partitions = db.query(Partition).filter(Partition.item_id == item.id).order_by(Partition.id).all()
+        query = db.query(Partition).filter(Partition.item_id == item.id)
+        query = order_by_numeric_suffix(query, Partition.id)
+        partitions = query.all()
         partitions_list = [
             {
                 "id": p.id,
@@ -273,7 +349,8 @@ def get_items(
         )
         query = query.filter(status_cond)
 
-    query = query.order_by(Item.id)
+    # order by numeric suffix of id for human-friendly numeric ordering (Postgres)
+    query = order_by_numeric_suffix(query, Item.id)
     total_count = query.count()
     skip = (page - 1) * page_size
     items = query.offset(skip).limit(page_size).all()
@@ -286,19 +363,17 @@ def _create_initial_stat_for_item(db: Session, db_item: Item, data: dict) -> Non
                                partition_capacity=data.get("partition_capacity"),
                                high_threshold=data.get("partition_high"),
                                low_threshold=data.get("partition_low"),
-                               stock_status=None)
+                               stock_status=StockStatus.LOW)
             db.add(ps)
             db.flush()
-            _update_partition_status(db, db_item.id)
     elif db_item.item_type == ItemType.LARGE_ITEM:
         if not db.query(LargeItemStat).filter(LargeItemStat.item_id == db_item.id).first():
             ls = LargeItemStat(item_id=db_item.id, total_quantity=0,
                                high_threshold=data.get("large_high"),
                                low_threshold=data.get("large_low"),
-                               stock_status=None)
+                               stock_status=StockStatus.LOW)
             db.add(ls)
             db.flush()
-            _update_largeitem_status(db, db_item.id)
     elif db_item.item_type == ItemType.CONTAINER:
         if not db.query(ContainerStat).filter(ContainerStat.item_id == db_item.id).first():
             init_total_qty = 0 if data.get("container_item_weight") is not None else None
@@ -309,10 +384,9 @@ def _create_initial_stat_for_item(db: Session, db_item: Item, data: dict) -> Non
                                total_quantity=init_total_qty,
                                high_threshold=data.get("container_high"),
                                low_threshold=data.get("container_low"),
-                               stock_status=None)
+                               stock_status=StockStatus.LOW)
             db.add(cs)
             db.flush()
-            _update_container_status(db, db_item.id)
 
 def create_item(db: Session, item: Union[ItemCreate, dict]) -> Item:
     data = _normalize_input_to_dict(item)
@@ -356,13 +430,25 @@ def create_item(db: Session, item: Union[ItemCreate, dict]) -> Item:
     db.commit()
     db.refresh(db_item)
 
-    try:
-        _create_initial_stat_for_item(db, db_item, data)
-        db.commit()
-        db.refresh(db_item)
-    except Exception:
-        db.rollback()
-        raise
+    _create_initial_stat_for_item(db, db_item, data)
+    db.commit()
+    db.refresh(db_item)
+
+    # Initial history snapshot for newly created items regardless of "changed" detection.
+    # This ensures the dashboard has a starting point for the item.
+    if db_item.item_type == ItemType.PARTITION:
+        ps = db.query(PartitionStat).filter(PartitionStat.item_id == db_item.id).first()
+        if ps:
+            _maybe_record_stat_history(db, ps, ["total_quantity", "total_capacity", "stock_status"], change_source="Register Item")
+    elif db_item.item_type == ItemType.LARGE_ITEM:
+        ls = db.query(LargeItemStat).filter(LargeItemStat.item_id == db_item.id).first()
+        if ls:
+            _maybe_record_stat_history(db, ls, ["total_quantity", "stock_status"], change_source="Register Item")
+    elif db_item.item_type == ItemType.CONTAINER:
+        cs = db.query(ContainerStat).filter(ContainerStat.item_id == db_item.id).first()
+        if cs:
+            _maybe_record_stat_history(db, cs, ["total_weight", "total_quantity", "stock_status"], change_source="Register Item")
+    db.commit()
 
     return db_item
 
@@ -383,21 +469,24 @@ def update_item(db: Session, item_id: str, item: Union[ItemUpdate, dict]) -> Opt
     effective_type = update_data.get("item_type") or db_item.item_type
     _ensure_thresholds_valid(update_data, effective_item_type=effective_type)
 
-    # extract stat-specific inputs
+    # extract stat-specific inputs (track whether provided so explicit null clears)
+    partition_capacity_provided = "partition_capacity" in update_data
     partition_capacity_val = update_data.pop("partition_capacity", None)
     partition_high = update_data.pop("partition_high", None)
     partition_low = update_data.pop("partition_low", None)
-    partition_stock_status = update_data.pop("partition_stock_status", None)
 
     large_high = update_data.pop("large_high", None)
     large_low = update_data.pop("large_low", None)
-    large_stock_status = update_data.pop("large_stock_status", None)
 
+    # detect whether caller provided the container fields (so explicit None clears them)
+    container_item_weight_provided = "container_item_weight" in update_data
     container_item_weight_val = update_data.pop("container_item_weight", None)
+    container_weight_provided = "container_weight" in update_data
     container_weight_val = update_data.pop("container_weight", None)
+    container_high_provided = "container_high" in update_data
     container_high = update_data.pop("container_high", None)
+    container_low_provided = "container_low" in update_data
     container_low = update_data.pop("container_low", None)
-    container_stock_status = update_data.pop("container_stock_status", None)
 
     # normalize enums present
     if "measure_method" in update_data and isinstance(update_data["measure_method"], str):
@@ -433,66 +522,166 @@ def update_item(db: Session, item_id: str, item: Union[ItemUpdate, dict]) -> Opt
             db.query(LargeItemStat).filter(LargeItemStat.item_id == db_item.id).delete(synchronize_session=False)
         elif original_type == ItemType.CONTAINER:
             db.query(ContainerStat).filter(ContainerStat.item_id == db_item.id).delete(synchronize_session=False)
+        # delete all previous stat history for this item to keep history consistent with new type
+        db.query(ItemStatHistory).filter(ItemStatHistory.item_id == db_item.id).delete(synchronize_session=False)
         # commit deletion together with the item changes below
+        
     db.commit()
     db.refresh(db_item)
+
+    # flag to avoid double-updating status later
+    container_status_updated = False
 
     # upsert per-type stat rows
     if db_item.item_type == ItemType.PARTITION:
         ps = db.query(PartitionStat).filter(PartitionStat.item_id == db_item.id).first()
         if not ps:
-            ps = PartitionStat(item_id=db_item.id, total_quantity=0)
+            ps = PartitionStat(item_id=db_item.id, total_quantity=0, total_capacity=0)
             db.add(ps)
-        if partition_capacity_val is not None:
             ps.partition_capacity = partition_capacity_val
-        if partition_high is not None:
             ps.high_threshold = partition_high
-        if partition_low is not None:
             ps.low_threshold = partition_low
-        if partition_stock_status is not None:
-            ps.stock_status = StockStatus(partition_stock_status)
-        db.commit()
-        db.refresh(ps)
+            ps.stock_status = StockStatus.LOW
+            db.commit()
+            db.refresh(ps)
+            # record an initial snapshot for the new/created partition stat (non-blocking)
+            try:
+                _maybe_record_stat_history(db, ps, ["total_quantity", "total_capacity", "stock_status"], change_source="Item Type Change")
+                db.commit()
+            except Exception:
+                db.rollback()
+        else:
+            # apply provided updates to existing partition stat
+            changes = {}
+            if partition_capacity_provided and ps.partition_capacity != partition_capacity_val:
+                changes["partition_capacity"] = partition_capacity_val
+            if partition_high is not None and ps.high_threshold != partition_high:
+                changes["high_threshold"] = partition_high
+            if partition_low is not None and ps.low_threshold != partition_low:
+                changes["low_threshold"] = partition_low
+            if changes:
+                # _persist_if_changed will set, record history and commit
+                _persist_if_changed(db, ps, changes, change_source="Item Update")
 
     if db_item.item_type == ItemType.LARGE_ITEM:
         ls = db.query(LargeItemStat).filter(LargeItemStat.item_id == db_item.id).first()
         if not ls:
             ls = LargeItemStat(item_id=db_item.id, total_quantity=0)
             db.add(ls)
-        if large_high is not None:
             ls.high_threshold = large_high
-        if large_low is not None:
             ls.low_threshold = large_low
-        if large_stock_status is not None:
-            ls.stock_status = StockStatus(large_stock_status)
-        db.commit()
-        db.refresh(ls)
+            ls.stock_status = StockStatus.LOW
+            db.commit()
+            db.refresh(ls)
+            # record an initial snapshot for the new/created large item stat (non-blocking)
+            try:
+                _maybe_record_stat_history(db, ls, ["total_quantity", "stock_status"], change_source="Item Type Change")
+                db.commit()
+            except Exception:
+                db.rollback()
+        else:
+            # apply provided updates to existing large item stat
+            changes = {}
+            if large_high is not None and ls.high_threshold != large_high:
+                changes["high_threshold"] = large_high
+            if large_low is not None and ls.low_threshold != large_low:
+                changes["low_threshold"] = large_low
+            if changes:
+                # _persist_if_changed will set, record history and commit
+                _persist_if_changed(db, ls, changes, change_source="Item Update")
 
     if db_item.item_type == ItemType.CONTAINER:
         cs = db.query(ContainerStat).filter(ContainerStat.item_id == db_item.id).first()
         if not cs:
-            cs = ContainerStat(item_id=db_item.id, total_weight=0.0)
+            # create new container stat (start LOW)
+            init_total_qty = 0 if container_item_weight_val is not None else None
+            cs = ContainerStat(
+                item_id=db_item.id,
+                container_item_weight=container_item_weight_val if container_item_weight_val is not None else None,
+                container_weight=container_weight_val if container_weight_val is not None else None,
+                total_weight=0.0,
+                total_quantity=init_total_qty,
+                high_threshold=container_high if container_high is not None else None,
+                low_threshold=container_low if container_low is not None else None,
+                stock_status=StockStatus.LOW,
+            )
             db.add(cs)
-        if container_item_weight_val is not None:
-            cs.container_item_weight = container_item_weight_val
-        if container_weight_val is not None:
-            cs.container_weight = container_weight_val
-        if container_high is not None:
-            cs.high_threshold = container_high
-        if container_low is not None:
-            cs.low_threshold = container_low
-        if container_stock_status is not None:
-            cs.stock_status = StockStatus(container_stock_status)
-        db.commit()
-        db.refresh(cs)
+            db.commit()
+            db.refresh(cs)
+            # explicit initial snapshot so "Item Type Change" is recorded
+            try:
+                _maybe_record_stat_history(db, cs, ["total_weight", "total_quantity", "stock_status"], change_source="Item Type Change")
+                db.commit()
+            except Exception:
+                db.rollback()
+            try:
+                _update_container_status(db, db_item.id, change_source="Item Type Change")
+            except Exception:
+                db.rollback()
+            container_status_updated = True
+        else:
+            # existing stat: detect transitions both ways
+            transitioning_to_weight = (container_item_weight_provided and container_item_weight_val is not None and cs.container_item_weight is None)
+            transitioning_to_no_weight = (container_item_weight_provided and container_item_weight_val is None and cs.container_item_weight is not None)
+
+            # apply provided updates (including explicit None)
+            changed = False
+            if container_item_weight_provided and cs.container_item_weight != container_item_weight_val:
+                cs.container_item_weight = container_item_weight_val
+                changed = True
+            if container_weight_provided and cs.container_weight != container_weight_val:
+                cs.container_weight = container_weight_val
+                changed = True
+            if container_high_provided and cs.high_threshold != container_high:
+                cs.high_threshold = container_high
+                changed = True
+            if container_low_provided and cs.low_threshold != container_low:
+                cs.low_threshold = container_low
+                changed = True
+            if changed:
+                db.add(cs)
+                db.commit()
+                db.refresh(cs)
+
+            # If we just started/stopped tracking per-item weight, previous history may be invalid.
+            if transitioning_to_weight or transitioning_to_no_weight:
+                try:
+                    db.query(ItemStatHistory).filter(ItemStatHistory.item_id == db_item.id).delete(synchronize_session=False)
+                    db.commit()
+                except Exception:
+                    db.rollback()
+
+            # choose an appropriate change_source: transitions take priority over threshold/weight updates
+            if transitioning_to_weight or transitioning_to_no_weight:
+                # explicit track-mode change snapshot
+                change_source = "Container Track Mode Change"
+            elif container_high_provided or container_low_provided:
+                change_source = "Item Threshold Change"
+            elif container_item_weight_provided:
+                change_source = "Container item weight Update"
+            elif container_weight_provided:
+                change_source = "Item Update"
+            else:
+                change_source = "Item Update"
+
+            # recompute totals/status and record snapshot using the selected change_source
+            try:
+                _update_container_status(db, db_item.id, change_source)
+                # ensure explicit snapshot immediately after changing tracking mode
+                if transitioning_to_weight or transitioning_to_no_weight:
+                    db.refresh(cs)
+                    db.commit()
+            except Exception:
+                db.rollback()
+            container_status_updated = True
 
     # recompute statuses
     if db_item.item_type == ItemType.PARTITION:
-        _update_partition_status(db, db_item.id)
+        _update_partition_status(db, db_item.id, "Item Threshold Change")    
     if db_item.item_type == ItemType.LARGE_ITEM:
-        _update_largeitem_status(db, db_item.id)
-    if db_item.item_type == ItemType.CONTAINER:
-        _update_container_status(db, db_item.id)
+        _update_largeitem_status(db, db_item.id, "Item Threshold Change")
+    if db_item.item_type == ItemType.CONTAINER and not container_status_updated:
+        _update_container_status(db, db_item.id, "Item Threshold Change")
 
     return db_item
 
@@ -577,3 +766,258 @@ def _ensure_thresholds_valid(data: dict, effective_item_type: Optional[Union[Ite
     if eit == ItemType.CONTAINER:
         if ch is None or cl is None:
             raise ValueError({"field": "container_high/low", "message": "container_high and container_low are required for container items"})
+
+def get_items_overview(db: Session):
+    # --- total items ---
+    total_items = db.query(func.count(Item.id)).scalar() or 0
+
+    # --- count of registered units (from actual physical tables) ---
+    partitions_count = db.query(func.count(Partition.id)).scalar() or 0
+    large_items_count = db.query(func.count(LargeItem.id)).scalar() or 0
+    containers_count = db.query(func.count(Container.id)).scalar() or 0
+    total_units = partitions_count + large_items_count + containers_count
+
+    # --- helper to count stock status for each stat table ---
+    def stock_count(model, status):
+        return db.query(func.count(model.item_id)).filter(model.stock_status == status).scalar() or 0
+
+    # --- stock breakdown (combine across all stat tables) ---
+    low = (
+        stock_count(PartitionStat, StockStatus.LOW)
+        + stock_count(LargeItemStat, StockStatus.LOW)
+        + stock_count(ContainerStat, StockStatus.LOW)
+    )
+
+    medium = (
+        stock_count(PartitionStat, StockStatus.MEDIUM)
+        + stock_count(LargeItemStat, StockStatus.MEDIUM)
+        + stock_count(ContainerStat, StockStatus.MEDIUM)
+    )
+
+    high = (
+        stock_count(PartitionStat, StockStatus.HIGH)
+        + stock_count(LargeItemStat, StockStatus.HIGH)
+        + stock_count(ContainerStat, StockStatus.HIGH)
+    )
+
+    # --- result ---
+    return {
+        "total_items": total_items,
+        "total_units": total_units,
+        "units_breakdown": {
+            "partitions": partitions_count,
+            "large_items": large_items_count,
+            "containers": containers_count,
+        },
+        "stock": {
+            "low": low,
+            "medium": medium,
+            "high": high,
+        },
+    }
+
+def aggregate_item_status_history(db: Session, start: str, end: str, granularity: str = "day") -> List[Dict[str, Any]]:
+    """
+    Aggregate ItemStatHistory into periods and count unique items per stock_status for each period.
+    Returns list of {"date": "YYYY-MM-DD", "values": { "low": n, "medium": n, "high": n }}
+    """
+    # parse date-only or full ISO and normalize to date for period iteration
+    try:
+        start_dt = datetime.fromisoformat(start).date()
+        end_dt = datetime.fromisoformat(end).date()
+    except Exception:
+        raise ValueError("start and end must be valid ISO dates (YYYY-MM-DD) or datetimes")
+
+    if end_dt < start_dt:
+        raise ValueError("end must be >= start")
+
+    if granularity not in ("day", "month", "year"):
+        raise ValueError("granularity must be one of: day, month, year")
+
+    # helper to compute period bounds
+    def _period_bounds_for(granularity: str, start_dt: date, idx: int):
+        if granularity == "day":
+            cur = start_dt + timedelta(days=idx)
+            start_dt_time = datetime.combine(cur, time.min)
+            end_dt_time = datetime.combine(cur, time.max)
+            label = cur
+        elif granularity == "month":
+            y = start_dt.year + (start_dt.month - 1 + idx) // 12
+            m = (start_dt.month - 1 + idx) % 12 + 1
+            label = date(y, m, 1)
+            start_dt_time = datetime.combine(label, time.min)
+            last_day = calendar.monthrange(y, m)[1]
+            end_dt_time = datetime.combine(date(y, m, last_day), time.max)
+        else:  # year
+            y = start_dt.year + idx
+            label = date(y, 1, 1)
+            start_dt_time = datetime.combine(label, time.min)
+            end_dt_time = datetime.combine(date(y, 12, 31), time.max)
+        return start_dt_time, end_dt_time, label
+
+    # compute number of periods
+    if granularity == "day":
+        periods = (end_dt - start_dt).days + 1
+    elif granularity == "month":
+        periods = (end_dt.year - start_dt.year) * 12 + (end_dt.month - start_dt.month) + 1
+    else:  # year
+        periods = (end_dt.year - start_dt.year) + 1
+
+    status_keys = [s.value for s in StockStatus]  # canonical keys
+
+    points: List[Dict[str, Any]] = []
+    for idx in range(periods):
+        p_start_dt, p_end_dt, label_date = _period_bounds_for(granularity, start_dt, idx)
+
+        # latest snapshot per item up to period end
+        subq = (
+            db.query(
+                ItemStatHistory.item_id.label("item_id"),
+                func.max(ItemStatHistory.timestamp).label("max_ts")
+            )
+            .filter(ItemStatHistory.timestamp <= p_end_dt)
+            .group_by(ItemStatHistory.item_id)
+            .subquery()
+        )
+
+        rows = (
+            db.query(ItemStatHistory.stock_status, func.count(distinct(ItemStatHistory.item_id)).label("cnt"))
+            .join(subq, and_(
+                ItemStatHistory.item_id == subq.c.item_id,
+                ItemStatHistory.timestamp == subq.c.max_ts
+            ))
+            .group_by(ItemStatHistory.stock_status)
+            .all()
+        )
+
+        values = {k: 0 for k in status_keys}
+        for stock_enum, cnt in rows:
+            if stock_enum is None:
+                continue
+            key = getattr(stock_enum, "value", str(stock_enum))
+            values[key] = int(cnt)
+
+        points.append({"date": label_date.isoformat(), "values": values})
+
+    return points
+
+def aggregate_item_history_for_item(
+    db: Session,
+    item_id: str,
+    start: str,
+    end: str,
+    granularity: str = "day",
+) -> List[Dict[str, Any]]:
+    """
+    For a single item: return time-series points for each period between start..end (inclusive)
+    where a snapshot exists <= period_end. Periods before item registration (change_source='item_created'
+    or first snapshot) are omitted.
+
+    Each point: {"date": "YYYY-MM-DD", "values": { "total_quantity": 10, "total_capacity": 5, "total_weight": 2.5, "stock_status": "low" }}
+    Only keys that exist on the snapshot are included.
+    """
+    # parse date-only or full ISO; use date portion for period iteration
+    try:
+        start_dt = datetime.fromisoformat(start).date()
+        end_dt = datetime.fromisoformat(end).date()
+    except Exception:
+        raise ValueError("start and end must be valid ISO dates or datetimes (YYYY-MM-DD or ISO)")
+
+    if end_dt < start_dt:
+        raise ValueError("end must be >= start")
+
+    if granularity not in ("day", "month", "year"):
+        raise ValueError("granularity must be one of: day, month, year")
+
+    # find earliest registration snapshot (prefer change_source == 'item_created')
+    created_row = (
+        db.query(ItemStatHistory)
+        .filter(ItemStatHistory.item_id == item_id, ItemStatHistory.change_source == "item_created")
+        .order_by(ItemStatHistory.timestamp.asc())
+        .first()
+    )
+    first_row = (
+        db.query(ItemStatHistory)
+        .filter(ItemStatHistory.item_id == item_id)
+        .order_by(ItemStatHistory.timestamp.asc())
+        .first()
+    )
+
+    if not first_row:
+        # no history for this item at all
+        return []
+
+    reg_date = (created_row.timestamp.date() if created_row else first_row.timestamp.date())
+
+    # do not include periods before registration
+    if start_dt < reg_date:
+        start_dt = reg_date
+
+    if end_dt < start_dt:
+        return []
+
+    def _period_bounds_for(granularity: str, start_dt: date, idx: int):
+        if granularity == "day":
+            cur = start_dt + timedelta(days=idx)
+            start_dt_time = datetime.combine(cur, time.min)
+            end_dt_time = datetime.combine(cur, time.max)
+            label = cur
+        elif granularity == "month":
+            y = start_dt.year + (start_dt.month - 1 + idx) // 12
+            m = (start_dt.month - 1 + idx) % 12 + 1
+            label = date(y, m, 1)
+            start_dt_time = datetime.combine(label, time.min)
+            last_day = calendar.monthrange(y, m)[1]
+            end_dt_time = datetime.combine(date(y, m, last_day), time.max)
+        else:  # year
+            y = start_dt.year + idx
+            label = date(y, 1, 1)
+            start_dt_time = datetime.combine(label, time.min)
+            end_dt_time = datetime.combine(date(y, 12, 31), time.max)
+        return start_dt_time, end_dt_time, label
+
+    # compute number of periods
+    if granularity == "day":
+        periods = (end_dt - start_dt).days + 1
+    elif granularity == "month":
+        periods = (end_dt.year - start_dt.year) * 12 + (end_dt.month - start_dt.month) + 1
+    else:
+        periods = (end_dt.year - start_dt.year) + 1
+
+    points: List[Dict[str, Any]] = []
+    for idx in range(periods):
+        _, p_end_dt, label_date = _period_bounds_for(granularity, start_dt, idx)
+
+        # latest snapshot timestamp for this item up to period end
+        latest_ts = (
+            db.query(func.max(ItemStatHistory.timestamp))
+            .filter(ItemStatHistory.item_id == item_id, ItemStatHistory.timestamp <= p_end_dt)
+            .scalar()
+        )
+        if latest_ts is None:
+            # no snapshot yet for this period -> skip (do not return zeros)
+            continue
+
+        row = (
+            db.query(ItemStatHistory)
+            .filter(ItemStatHistory.item_id == item_id, ItemStatHistory.timestamp == latest_ts)
+            .first()
+        )
+        if not row:
+            continue
+
+        values: Dict[str, Any] = {}
+        if row.total_quantity is not None:
+            # preserve ints when whole number, else float
+            values["total_quantity"] = int(row.total_quantity) if float(row.total_quantity).is_integer() else float(row.total_quantity)
+        if row.total_capacity is not None:
+            values["total_capacity"] = int(row.total_capacity) if float(row.total_capacity).is_integer() else float(row.total_capacity)
+        if row.total_weight is not None:
+            values["total_weight"] = float(row.total_weight)
+        # include stock_status string for convenience
+        if row.stock_status is not None:
+            values["stock_status"] = getattr(row.stock_status, "value", str(row.stock_status))
+
+        points.append({"date": label_date.isoformat(), "values": values})
+
+    return points

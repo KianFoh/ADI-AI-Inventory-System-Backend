@@ -1,7 +1,7 @@
 from pydantic import BaseModel, field_validator
-from typing import List
+from typing import List, Optional
 import math
-from app.validators import non_empty_string_validator, boolean_validator
+from app.validators import boolean_validator
 
 class RFIDTagBase(BaseModel):
     id: str
@@ -19,6 +19,11 @@ class RFIDTagUpdate(BaseModel):
         return boolean_validator("Assigned")(v)
 
 class RFIDTagResponse(RFIDTagBase):
+    # enrich response with optional assignment/unit info
+    unit_id: Optional[str] = None
+    item_type: Optional[str] = None
+    item_id: Optional[str] = None
+    item_name: Optional[str] = None
     class Config:
         from_attributes = True
 

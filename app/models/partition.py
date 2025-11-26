@@ -30,17 +30,11 @@ class Partition(Base):
 @event.listens_for(Partition, "before_insert")
 def generate_partition_id(mapper, connection, target):
     prefix = "P"
+    seq_name = "partitions_seq"
 
-    # Query the max existing number
-    result = connection.execute(
-        text(f"SELECT id FROM partitions WHERE id LIKE '{prefix}%' ORDER BY id DESC LIMIT 1")
-    ).fetchone()
+    # ensure sequence exists (prefer to create via migration in production)
+    connection.execute(text(f"CREATE SEQUENCE IF NOT EXISTS {seq_name} START 1"))
 
-    if result is None:
-        next_number = 1
-    else:
-        last_id = result[0]
-        last_number = int(last_id[1:])
-        next_number = last_number + 1
-
-    target.id = f"{prefix}{next_number}"
+    # atomically get next value
+    next_val = connection.execute(text(f"SELECT nextval('{seq_name}')")).scalar()
+    target.id = f"{prefix}{int(next_val)}"

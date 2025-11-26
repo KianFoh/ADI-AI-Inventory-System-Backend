@@ -53,15 +53,14 @@ class Container(Base):
 @event.listens_for(Container, "before_insert")
 def generate_container_id(mapper, connection, target):
     prefix = "C"
-    result = connection.execute(
-        text(f"SELECT id FROM containers WHERE id LIKE '{prefix}%' ORDER BY id DESC LIMIT 1")
-    ).fetchone()
+    seq_name = "containers_seq"
 
-    if result is None:
-        next_number = 1
-    else:
-        last_id = result[0]  # e.g., "C12"
-        last_number = int(last_id[1:])
-        next_number = last_number + 1
+    # create sequence if it doesn't exist (prefer to provision via migration in production)
+    try:
+        connection.execute(text(f"CREATE SEQUENCE IF NOT EXISTS {seq_name} START 1"))
+    except Exception:
+        pass
 
-    target.id = f"{prefix}{next_number}"
+    # atomically get the next value
+    next_val = connection.execute(text(f"SELECT nextval('{seq_name}')")).scalar()
+    target.id = f"{prefix}{int(next_val)}"

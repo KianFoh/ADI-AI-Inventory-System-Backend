@@ -1,7 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from app.database import get_db
 from app.crud import item as item_crud
 from app.models.item import ItemType, MeasureMethod
@@ -13,7 +13,8 @@ from app.schemas.item import (
     PaginatedItemsResponse
 )
 from app.utils.image import get_image_full_path
-import re
+import logging
+import traceback
 
 router = APIRouter(
     prefix="/items",
@@ -83,6 +84,33 @@ def get_item_types():
 @router.get("/measure-methods", response_model=List[str])
 def get_measure_methods():
     return [m.value for m in MeasureMethod]
+
+# ------------------ Counts & Overview (must appear BEFORE the dynamic /{item_id} route) ------------------ #
+@router.get("/count/total", response_model=int)
+def get_item_count(db: Session = Depends(get_db)):
+    return item_crud.get_item_count(db)
+
+@router.get("/count/type/{item_type}", response_model=int)
+def get_item_count_by_type(item_type: str, db: Session = Depends(get_db)):
+    try:
+        item_type_enum = ItemType(item_type.lower())
+    except ValueError:
+        raise HTTPException(status_code=400, detail={"field": "item_type", "message": f"Invalid item type. Must be one of {[t.value for t in ItemType]}"})
+    return item_crud.get_item_count_by_type(db, item_type_enum)
+
+@router.get("/count/manufacturers", response_model=int)
+def get_manufacturer_count(db: Session = Depends(get_db)):
+    return item_crud.get_manufacturer_count(db)
+
+@router.get("/overview", response_model=dict)
+def items_overview(db: Session = Depends(get_db)):
+    try:
+        overview = item_crud.get_items_overview(db)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to compute items overview")
+    return overview
 
 # ------------------ Single Item ------------------ #
 
@@ -168,6 +196,11 @@ def create_item(request: Request, item: ItemCreate, db: Session = Depends(get_db
 def update_item(request: Request, item_id: str, item: ItemUpdate, db: Session = Depends(get_db)):
     update_payload = item.model_dump(exclude_unset=True)
 
+    # If the following fields are omitted in the payload, explicitly set them to NULL in DB
+    for _f in ("manufacturer", "tooling_used", "vendor_pn", "sap_pn", "package_used"):
+        if _f not in update_payload:
+            update_payload[_f] = None
+
     # If process/name present, combine to stored name
     proc = update_payload.get("process")
     name_val = update_payload.get("name")
@@ -221,22 +254,51 @@ def delete_item(request: Request, item_id: str, db: Session = Depends(get_db)):
         return item_crud.create_item_response(db, deleted_item, base_url)
     except ValueError as e:
         raise HTTPException(status_code=400, detail={"field": "item_id", "message": str(e)})
+    
 
+# ------------------ Item Status History ------------------ #
 
-# ------------------ Counts ------------------ #
-
-@router.get("/count/total", response_model=int)
-def get_item_count(db: Session = Depends(get_db)):
-    return item_crud.get_item_count(db)
-
-@router.get("/count/type/{item_type}", response_model=int)
-def get_item_count_by_type(item_type: str, db: Session = Depends(get_db)):
+@router.get("/history/aggregate", response_model=List[Dict[str, Any]])
+def aggregate_item_status_history(
+    start: str = Query(..., description="ISO date/time start (YYYY-MM-DD or ISO)"),
+    end: str = Query(..., description="ISO date/time end (YYYY-MM-DD or ISO)"),
+    granularity: str = Query("day", description="Aggregation granularity: day|month|year"),
+    db: Session = Depends(get_db),
+) -> List[Dict[str, Any]]:
     try:
-        item_type_enum = ItemType(item_type.lower())
-    except ValueError:
-        raise HTTPException(status_code=400, detail={"field": "item_type", "message": f"Invalid item type. Must be one of {[t.value for t in ItemType]}"})
-    return item_crud.get_item_count_by_type(db, item_type_enum)
+        points = item_crud.aggregate_item_status_history(db, start=start, end=end, granularity=granularity)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logging.exception("aggregate_item_status_history failed")
+        # include traceback in logs, return message for local debugging
+        tb = traceback.format_exc()
+        logging.debug(tb)
+        # For production do not leak internals; here we return message to help debug locally
+        raise HTTPException(status_code=500, detail=f"Failed to aggregate item status history: {e}")
+    return points
 
-@router.get("/count/manufacturers", response_model=int)
-def get_manufacturer_count(db: Session = Depends(get_db)):
-    return item_crud.get_manufacturer_count(db)
+@router.get("/{item_id}/history", response_model=List[Dict[str, Any]])
+def get_item_history(
+    item_id: str,
+    start: str = Query(..., description="ISO date/time start (YYYY-MM-DD or ISO)"),
+    end: str = Query(..., description="ISO date/time end (YYYY-MM-DD or ISO)"),
+    granularity: str = Query("day", description="Aggregation granularity: day|month|year"),
+    db: Session = Depends(get_db),
+) -> List[Dict[str, Any]]:
+    """
+    Return time-series stat snapshots for a single item.
+    Periods before the item was registered (change_source='item_created' or first snapshot) are omitted.
+    """
+    try:
+        points = item_crud.aggregate_item_history_for_item(db, item_id=item_id, start=start, end=end, granularity=granularity)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logging.exception("get_item_history failed")
+        tb = traceback.format_exc()
+        logging.debug(tb)
+        raise HTTPException(status_code=500, detail=f"Failed to aggregate item history: {e}")
+    return points
+
+

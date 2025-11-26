@@ -1,12 +1,13 @@
 from sqlalchemy.orm import Session
-from sqlalchemy import func, or_, text, inspect
-from app.schemas.rfid_tag import RFIDTagCreate, RFIDTagUpdate, RFIDTagResponse
+from sqlalchemy import inspect
+from app.schemas.rfid_tag import RFIDTagUpdate, RFIDTagResponse
 from app.models.rfid_tag import RFIDTag
 from app.models.large_item import LargeItem
 from app.models.partition import Partition
 from app.models.container import Container
 from app.models.item import Item
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Dict, Any
+from app.crud.general import order_by_numeric_suffix
 
 def get_rfid_tag(db: Session, tag_id: str) -> Optional[RFIDTagResponse]:
     tag = db.query(RFIDTag).filter(RFIDTag.id == tag_id).first()
@@ -20,8 +21,8 @@ def get_rfid_tags(
     page_size: int = 10,
     search: Optional[str] = None,
     assigned_filter: Optional[bool] = None
-) -> Tuple[List[RFIDTag], int]:
-    """Get RFID tags with pagination and search"""
+) -> Tuple[List[Dict[str, Any]], int]:
+    """Get RFID tags with pagination and search. Returns enriched dicts including assignment info."""
     query = db.query(RFIDTag)
     
     if search:
@@ -34,9 +35,39 @@ def get_rfid_tags(
     total_count = query.count()
     
     skip = (page - 1) * page_size
-    tags = query.order_by(RFIDTag.id).offset(skip).limit(page_size).all()
+    query = order_by_numeric_suffix(query, RFIDTag.id)
+    tags = query.offset(skip).limit(page_size).all()
+
+    results: List[Dict[str, Any]] = []
+    for t in tags:
+        row: Dict[str, Any] = {
+            "id": t.id,
+            "assigned": bool(t.assigned),
+        }
+        # Lookup unit and item information if assigned
+        if t.assigned:
+            unit = get_unit_by_rfid_tag(db, t.id)
+            if unit:
+                # unit dict from get_unit_by_rfid_tag includes 'id', 'item_id', 'item_name' and 'item_type'
+                row["unit_id"] = unit.get("id")
+                row["item_type"] = unit.get("unit_type")
+                row["item_id"] = unit.get("item_id")
+                row["item_name"] = unit.get("item_name")
+            else:
+                # assigned flag true but not found (possible data inconsistency)
+                row["unit_id"] = None
+                row["item_type"] = None
+                row["item_id"] = None
+                row["item_name"] = None
+        else:
+            row["unit_id"] = None
+            row["item_type"] = None
+            row["item_id"] = None
+            row["item_name"] = None
+
+        results.append(row)
     
-    return tags, total_count
+    return results, total_count
 
 def create_rfid_tag(db: Session) -> RFIDTagResponse:
     db_tag = RFIDTag(assigned=False)
@@ -137,7 +168,7 @@ def get_unit_by_rfid_tag(db: Session, rfidtag: str):
         result = _model_to_dict(unit)
         item = db.query(Item).filter(Item.id == getattr(unit, "item_id", None)).first()
         result["item_name"] = item.name if item else None
-        result["unit_table"] = "large_items"
+        result["unit_type"] = "large_item"
         return result
 
     # check partitions
@@ -146,7 +177,8 @@ def get_unit_by_rfid_tag(db: Session, rfidtag: str):
         result = _model_to_dict(unit)
         item = db.query(Item).filter(Item.id == getattr(unit, "item_id", None)).first()
         result["item_name"] = item.name if item else None
-        result["unit_table"] = "partitions"
+        result["unit_type"] = "partition"
+        result["partition_capacity"] = item.partition_stat.partition_capacity
         return result
 
     # check containers
@@ -155,7 +187,8 @@ def get_unit_by_rfid_tag(db: Session, rfidtag: str):
         result = _model_to_dict(unit)
         item = db.query(Item).filter(Item.id == getattr(unit, "item_id", None)).first()
         result["item_name"] = item.name if item else None
-        result["unit_table"] = "containers"
+        result["unit_type"] = "container"
+        result["container_weight"] = item.container_stat.container_weight
         return result
 
     return None

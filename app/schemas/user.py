@@ -18,7 +18,9 @@ class UserCreate(UserBase):
     @field_validator('name')
     @classmethod
     def validate_name(cls, v: str) -> str:
-        return non_empty_string_validator('Name')(v)
+        # normalize: trim and capitalize first letter of each word (keep other letters lower)
+        raw = non_empty_string_validator('Name')(v)
+        return " ".join(part.capitalize() for part in raw.strip().split())
 
 class UserUpdate(BaseModel):
     employeeId: Optional[str] = None
@@ -37,7 +39,8 @@ class UserUpdate(BaseModel):
     @classmethod
     def validate_name(cls, v: Optional[str]) -> Optional[str]:
         if v is not None:
-            return non_empty_string_validator('Name')(v)
+            raw = non_empty_string_validator('Name')(v)
+            return " ".join(part.capitalize() for part in raw.strip().split())
         return v
 
 class UserResponse(UserBase):
